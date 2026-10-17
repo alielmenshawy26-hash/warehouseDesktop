@@ -1,0 +1,42 @@
+
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build application
+        run: |
+          pyinstaller --noconfirm --clean --windowed --onefile --name "Warehouse" "Warehouse app.py"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: cmd
+        run: |
+          ISCC.exe "Installer.iss"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Warehouse-Setup
+          path: Output/*.exe
+          if-no-files-found: error
