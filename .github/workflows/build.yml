@@ -24,7 +24,7 @@ jobs:
 
       - name: Build application
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile --name "Warehouse" "Warehouse app.py"
+          pyinstaller --noconfirm --clean --windowed --onefile --name "Warehouse" "Warehouse_app.py"
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
