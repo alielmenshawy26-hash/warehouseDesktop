@@ -3,8 +3,15 @@
 برنامج ويندوز للمخازن والمبيعات: فواتير، سندات، عملاء وموردين، أصناف ومخزون (FIFO)، خزنة وجرد، موظفين ومرتبات وتشوين، مناديب وتارجت، تقارير يومية وشهرية وأرباح، ونسخ احتياطي.
 شغال من غير نت (قاعدة بيانات على الجهاز)، ولو فيه أكتر من جهاز ممكن يشتغلوا على PostgreSQL في الشبكة.
 
-**تحميل آخر نسخة:** https://github.com/alielmenshawy26-hash/warehouseDesktop/releases/latest/download/Warehouse-Setup.exe
+**كل عميل ليه نسخة لوحده** باسم شركته وشعاره مقفولين جوه البرنامج (محدش يقدر يغيّرهم ويبيع البرنامج باسمه):
 
-بعد التسطيب: اعمل يوزر المالك أول مرة، وبعدين من **الإعدادات** اكتب اسم الشركة وحط الشعار.
+`https://github.com/alielmenshawy26-hash/warehouseDesktop/releases/latest/download/Warehouse-Setup-<العميل>.exe`
+
+- فرحات: `Warehouse-Setup-farahat.exe` (واللينك القديم `Warehouse-Setup.exe` = نفس نسخة فرحات)
+- نسخة العرض: `Warehouse-Setup-demo.exe` (اسمها «نسخة تجريبية»)
+
+**عميل جديد:** فولدر جديد في `clients/<slug>/` فيه `client.json` (`{"company": "...", "tagline": "..."}`) و`logo.png`، وبعد الـ push بيتعمل له Setup لوحده.
+
+بعد التسطيب: اعمل يوزر المالك أول مرة.
 
 تفاصيل الكود: `CLAUDE.md`.

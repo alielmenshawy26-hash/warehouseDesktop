@@ -2210,7 +2210,7 @@ class Api:
             return {"company": g("company") or W.DEFAULT_COMPANY, "tagline": g("tagline"), "english": g("english"), "address": g("address"), "phone": g("phone"), "taxno": g("taxno"), "owners_list": g("owners_list"),
                     "trust_from": g("trust_from"), "trust_to": g("trust_to"), "trust_to_addr": g("trust_to_addr"),
                     "lock_until": g("lock_until"), "lock_auto": bool(st["lock_auto"]) if "lock_auto" in st.keys() else False, "lock_now": W.lock_date(c),
-                    "backup_dir": W.backup_dir(), "server": W.server_label(), "version": W.version_text(), "owner": W.is_owner(),
+                    "backup_dir": W.backup_dir(), "server": W.server_label(), "version": W.version_text(), "owner": W.is_owner(), "brand_locked": W.BRAND_LOCKED,
                     "cash_opening": _r2(float((st["cash_opening"] if "cash_opening" in st.keys() else 0) or 0))}
 
     def settings_save(self, v):
@@ -2218,17 +2218,16 @@ class Api:
         with W.db() as c:
             c.execute("UPDATE settings SET english=?,address=?,phone=?,taxno=? WHERE id=1",
                       ((v.get("english") or "").strip(), (v.get("address") or "").strip(), (v.get("phone") or "").strip(), (v.get("taxno") or "").strip()))
-            if W.is_owner():                         # اسم الشركة وتحت الاسم: المالك بس
-                if (v.get("company") or "").strip(): c.execute("UPDATE settings SET company=? WHERE id=1", (v["company"].strip(),))
-                if v.get("tagline") is not None: c.execute("UPDATE settings SET tagline=? WHERE id=1", (v["tagline"].strip(),))
+            # اسم الشركة وتحت الاسم مقفولين جوه النسخة (W.BRAND_*) — مش بيتغيروا من هنا
             if W.is_owner() and v.get("owners_list") is not None:
                 c.execute("UPDATE settings SET owners_list=? WHERE id=1", ("،".join(x.strip() for x in str(v["owners_list"]).replace(",", "،").split("،") if x.strip()),))
             W.log(c, "تعديل الإعدادات", "بيانات الشركة")
         return True
 
     def set_logo(self, data_url=None):
-        """شعار الشركة (PNG/JPG لحد 1.5 ميجا) — فاضي = يرجع للشعار العام. للمالك بس."""
+        """الشعار مقفول جوه النسخة — بيتغيّر بنسخة جديدة من المطور بس."""
         self._need_login()
+        if W.BRAND_LOCKED: raise UIError("اسم الشركة والشعار مقفولين في النسخة دي — بيتغيروا بنسخة جديدة من المطور")
         if not W.is_owner(): raise UIError("الشعار بيتغيّر من المالك بس")
         b64 = ""
         if data_url:

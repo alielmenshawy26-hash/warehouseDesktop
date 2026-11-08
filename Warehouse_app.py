@@ -72,14 +72,22 @@ DEFAULT_LOGO_SMALL = {
 }
 LOGO_PATH = os.path.join(APP_DATA_DIR, "logo.png")
 
+# ===== اسم الشركة والشعار: مقفولين جوه البرنامج — كل عميل ليه نسخة (build) بالاسم والشعار بتوعه =====
+# client_brand.py بيتعمل وقت الـ build من clients/<slug>/ (tools/make_brand.py). من غيره = نسخة تجريبية.
+try:
+    import client_brand as _BRAND
+    BRAND_SLUG = getattr(_BRAND, "BRAND_SLUG", "")
+    BRAND_COMPANY = (getattr(_BRAND, "BRAND_COMPANY", "") or "").strip() or "نسخة تجريبية"
+    BRAND_TAGLINE = (getattr(_BRAND, "BRAND_TAGLINE", "") or "").strip()
+    BRAND_LOGO_B64 = getattr(_BRAND, "BRAND_LOGO_B64", "") or DEFAULT_LOGO_B64
+except Exception:
+    BRAND_SLUG, BRAND_COMPANY, BRAND_TAGLINE, BRAND_LOGO_B64 = "", "نسخة تجريبية", "", DEFAULT_LOGO_B64
+BRAND_LOCKED = True     # الاسم والشعار مش بيتغيروا من الإعدادات (بيتغيروا بنسخة جديدة من المطور بس)
+
 def logo_bytes():
-    """الشعار الحالي: اللي المالك اختاره من الإعدادات، وإلا الشعار العام."""
-    try:
-        with db() as c:
-            r = c.execute("SELECT logo_b64 FROM settings WHERE id=1").fetchone()
-        if r and r[0]: return base64.b64decode(r[0])
-    except Exception: pass
-    return base64.b64decode(DEFAULT_LOGO_B64)
+    """شعار العميل المقفول جوه النسخة."""
+    try: return base64.b64decode(BRAND_LOGO_B64)
+    except Exception: return base64.b64decode(DEFAULT_LOGO_B64)
 
 def logo_data_uri():
     b = logo_bytes()
@@ -497,10 +505,10 @@ def fmt_time(ts):
 EMP_KINDS = ("موظف", "عامل", "مندوب")
 EMP_LEFT = "اللي سابوا الشغل"
 OFFICE = "مكتب"
-DEFAULT_COMPANY = "اسم الشركة"
+DEFAULT_COMPANY = BRAND_COMPANY
 # ===== (من زلط) الترخيص — في النسخة الأوفلاين الاسم والشعار بيتغيروا من الإعدادات للمالك — الاسم والشعار ثابتين ومحدش يقدر يغيّرهم من البرنامج =====
-LICENSED_COMPANY = "اسم الشركة"     # النسخة الأوفلاين: الاسم بيتغيّر من الإعدادات
-LICENSED_TAGLINE = ""
+LICENSED_COMPANY = BRAND_COMPANY     # مقفول جوه النسخة (clients/<slug>/client.json)
+LICENSED_TAGLINE = BRAND_TAGLINE
 DEVELOPER_MARK = "By Ali ElMenshawy"
 # رقم النسخة: الـ build على GitHub بيكتب الرقم والتاريخ هنا لوحده
 APP_BUILD = 0                 # BUILD_NUMBER
@@ -519,7 +527,7 @@ def check_app_version():
             if APP_BUILD > cur: c.execute("UPDATE settings SET app_build=? WHERE id=1", (APP_BUILD,)); return None
             return cur if cur > APP_BUILD else None
     except Exception: return None
-DEFAULT_TAGLINE = ""
+DEFAULT_TAGLINE = BRAND_TAGLINE
 
 def add_col(c, table, col, decl):
     cols = [r[1] for r in c.execute(f"PRAGMA table_info({table})")]
@@ -665,8 +673,9 @@ def init_db():
             for n in ("شيال", "أجور", "جاز", "إيجار عربية", "كهربا"):
                 c.execute("INSERT OR IGNORE INTO expense_cats(name) VALUES(?)", (n,))
         c.execute("INSERT OR IGNORE INTO expense_cats(name) VALUES('مصروفات أخرى')")
-        add_col(c, "settings", "logo_b64", "TEXT DEFAULT ''")    # شعار العميل (من الإعدادات)
-        c.execute("UPDATE settings SET tagline=? WHERE id=1 AND tagline IS NULL", (DEFAULT_TAGLINE,))
+        add_col(c, "settings", "logo_b64", "TEXT DEFAULT ''")    # (قديم) — الشعار دلوقتي مقفول جوه النسخة
+        # اسم الشركة وتحت الاسم والشعار: دايمًا بتوع النسخة دي (محدش يقدر يغيّرهم ويبيع البرنامج باسمه)
+        c.execute("UPDATE settings SET company=?, tagline=?, logo_b64='' WHERE id=1", (BRAND_COMPANY, BRAND_TAGLINE))
     migrate_daily_numbering()
     with db() as c:
         # فهارس علشان البرنامج يفضل سريع مع سنين من البيانات

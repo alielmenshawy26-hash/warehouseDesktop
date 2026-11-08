@@ -2467,7 +2467,8 @@ async function renderVehicles(box) {
 async function renderSettings(box) {
   const st = await api("settings_get");
   const inp = (v, label, extra = {}) => h("input", { class: "in", value: v ?? "", "aria-label": label, ...extra });
-  const coName = inp(st.company, "اسم الشركة", st.owner ? {} : { disabled: true }), coTag = inp(st.tagline, "تحت الاسم", st.owner ? {} : { disabled: true });
+  const brandRO = st.brand_locked || !st.owner;   // الاسم والشعار مقفولين جوه النسخة (بيتغيروا بنسخة جديدة من المطور)
+  const coName = inp(st.company, "اسم الشركة", brandRO ? { disabled: true } : {}), coTag = inp(st.tagline, "تحت الاسم", brandRO ? { disabled: true } : {});
   const logoImg = h("img", { src: S.boot.logo, alt: "الشعار", style: { height: "64px", width: "64px", objectFit: "contain", borderRadius: "12px", border: "1px solid var(--line-2)", background: "#fff" } });
   const logoFile = h("input", { type: "file", accept: "image/png,image/jpeg", style: { display: "none" }, onchange: () => {
     const f = logoFile.files[0]; if (!f) return; const rd = new FileReader();
@@ -2481,12 +2482,14 @@ async function renderSettings(box) {
   const sec = (title, d, ...kids) => h("section", { class: "card anim-up " + d }, h("div", { class: "card-h" }, h("h2", null, title)), ...kids);
   box.replaceChildren(h("div", { class: "page", style: { maxWidth: "1000px" } },
     sec("بيانات الشركة", "d1", h("div", { class: "form" }, h("label", { class: "fld" }, "اسم الشركة", coName), h("label", { class: "fld" }, "تحت الاسم (مثلًا: للتوريدات العمومية)", coTag),
+      st.brand_locked ? h("div", { class: "fld span2", style: { flexDirection: "row", alignItems: "center", gap: "12px" } }, logoImg,
+        h("span", { class: "hint" }, "🔒 اسم الشركة والشعار مقفولين في النسخة دي — بيتغيروا بنسخة جديدة من المطور")) :
       st.owner ? h("div", { class: "fld span2", style: { flexDirection: "row", alignItems: "center", gap: "12px" } }, logoImg, logoFile,
         h("button", { class: "btn", type: "button", onclick: () => logoFile.click() }, icon("edit", 18), "تغيير الشعار"),
         h("button", { class: "btn ghost", type: "button", onclick: async () => { try { const uri = await api("set_logo", ""); S.boot.logo = uri; logoImg.src = uri; toast("✔ رجع الشعار العام", "ok"); } catch (e) { alertBox(e.message); } } }, "الشعار العام"),
         h("span", { class: "hint" }, "PNG أو JPG — بيظهر في البرنامج والطباعة")) : null,
       h("label", { class: "fld" }, "الاسم بالإنجليزي", co.english), h("label", { class: "fld span2" }, "العنوان", co.address), h("label", { class: "fld" }, "التليفون", co.phone), h("label", { class: "fld" }, "الرقم الضريبي", co.taxno), st.owner ? h("label", { class: "fld span2" }, "أسماء الملاك (للجرد — بينهم «،»)", co.owners_list) : null,
-      h("div", { class: "fld", style: { justifyContent: "flex-end" } }, h("button", { class: "btn primary", onclick: async () => { try { await api("settings_save", vals(co)); S.boot.company = coName.value || S.boot.company; S.boot.tagline = coTag.value; toast("✔ اتحفظت بيانات الشركة", "ok"); } catch (e) { alertBox(e.message); } } }, icon("save", 18), "حفظ")))),
+      h("div", { class: "fld", style: { justifyContent: "flex-end" } }, h("button", { class: "btn primary", onclick: async () => { try { await api("settings_save", vals(co)); if (!st.brand_locked) { S.boot.company = coName.value || S.boot.company; S.boot.tagline = coTag.value; } toast("✔ اتحفظت بيانات الشركة", "ok"); } catch (e) { alertBox(e.message); } } }, icon("save", 18), "حفظ")))),
     sec("بيانات إيصال الأمانة", "d2", h("div", { class: "form" }, h("label", { class: "fld" }, "من (الاسم)", tr.trust_from), h("label", { class: "fld" }, "إلى (الاسم)", tr.trust_to), h("label", { class: "fld span2" }, "العنوان", tr.trust_to_addr),
       h("div", { class: "fld", style: { justifyContent: "flex-end", flexDirection: "row", gap: "8px", alignItems: "flex-end" } },
         h("button", { class: "btn primary", onclick: async () => { try { await api("trust_save", vals(tr)); toast("✔ اتحفظ", "ok"); } catch (e) { alertBox(e.message); } } }, icon("save", 18), "حفظ"),

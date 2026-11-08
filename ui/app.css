@@ -477,3 +477,6 @@ html.standalone .shell{background:var(--ground);min-height:100dvh}
 .tgt-list{max-height:52vh;overflow:auto;border:1px solid var(--line-2);border-radius:12px;padding:6px}
 .tgt-it{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer}
 .tgt-it:hover{background:#f1f6fd}.tgt-it input{width:20px;height:20px}.tgt-it .hint{margin-inline-start:auto}
+
+/* الخانات المقفولة (زي اسم الشركة المقفول في النسخة) */
+.in:disabled { background: #eef2f6; color: #64748b; cursor: not-allowed; }

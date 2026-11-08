@@ -9,14 +9,24 @@
 | `Warehouse_app.py` | المحرك: قاعدة البيانات (SQLite أو PostgreSQL)، الحسابات، FIFO، الطباعة (HTML → PDF)، النسخ الاحتياطي. فيه كمان واجهة Tkinter القديمة (مش مستخدمة في البرنامج الجديد). |
 | `zalat_ui.py` | البرنامج نفسه: `Api` (كل دوال الشاشات)، الصلاحيات (`ALL_SCREENS`/`OWNER_ONLY_SCREENS`/`DEFAULT_SCREENS`/`METHOD_SCREENS`)، `_guard`/`_scope`، سيرفر الموقع، و`main()` (pywebview). |
 | `ui/` | الواجهة: `index.html`، `app.js` (كل الشاشات)، `app.css`، `fonts/` (خط Cairo جوه البرنامج — مفيش جوجل)، `icons/`، `sw.js`، `manifest.webmanifest`. |
-| `installer.iss` | Inno Setup: `Warehouse-Setup.exe`، الـ AppId نفس warehouseDesktop القديم (بيحدّث فوقه). |
-| `.github/workflows/build.yml` | بيبني `Warehouse.exe` + الـ installer مع كل push على main، وبيعمل Release `V1.0.N`. |
+| `installer.iss` | Inno Setup: `Warehouse-Setup-<slug>.exe`، الـ AppId نفس warehouseDesktop القديم (بيحدّث فوقه). |
+| `clients/<slug>/` | عميل: `client.json` (`company`، `tagline`) + `logo.png`. كل فولدر = Setup لوحده. |
+| `tools/make_brand.py` | بيعمل `client_brand.py` (اسم + تحت الاسم + شعار base64) لعميل قبل الـ build. الملف ده متجاهل في git. |
+| `.github/workflows/build.yml` | مع كل push على main: Setup لكل عميل في `clients/` + Release `V1.0.N` فيه كلهم. |
 
-لينك التحميل المباشر لآخر نسخة: `https://github.com/alielmenshawy26-hash/warehouseDesktop/releases/latest/download/Warehouse-Setup.exe`
+لينك التحميل: `https://github.com/alielmenshawy26-hash/warehouseDesktop/releases/latest/download/Warehouse-Setup-<slug>.exe`
+(`Warehouse-Setup.exe` القديم = نسخة فرحات علشان التحديث القديم يفضل شغال).
+
+## الاسم والشعار مقفولين (علشان محدش ياخد البرنامج ويبيعه)
+- كل عميل ليه build: `W.BRAND_COMPANY` / `BRAND_TAGLINE` / `BRAND_LOGO_B64` من `client_brand.py`. من غيره = «نسخة تجريبية» بالشعار العام.
+- `init_db` بيكتب الاسم وتحت الاسم بتوع النسخة في `settings` كل مرة، و`logo_bytes()` بيرجع شعار النسخة دايمًا.
+- `settings_save` مبيغيّرش الاسم، و`set_logo` بيرفض (`W.BRAND_LOCKED`)، والإعدادات بتعرضهم مقفولين.
+- عميل جديد = فولدر في `clients/` + push. تغيير اسم/شعار عميل = تعديل الفولدر بتاعه + push (نسخة جديدة).
+- تجربة محلية لعميل: `python tools/make_brand.py farahat` وبعدين `python zalat_ui.py --serve` (امسح `client_brand.py` بعدها).
 
 ## الفرق عن زلط
 - مجلد الداتا: `%LOCALAPPDATA%\WarehouseDesktop` (نفس البرنامج الأوفلاين القديم → داتا العملاء القدام بتكمّل وبتتحدّث لوحدها في `init_db`). زلط بيستخدم `WarehouseOnline`.
-- اسم الشركة و«تحت الاسم» والشعار بيتغيروا من **الإعدادات** (للمالك). الشعار متخزن في `settings.logo_b64`، والافتراضي شعار عام (`DEFAULT_LOGO_B64`).
+- اسم الشركة و«تحت الاسم» والشعار **مقفولين جوه كل نسخة** (`clients/<slug>/`) — مش بيتغيروا من الإعدادات.
 - رقم النسخة `V1.0.N` (زلط `V2.1.N`). اسم البرنامج `Warehouse.exe`.
 - الخط محلي (`ui/fonts/cairo.css`) — البرنامج شغال 100% من غير نت.
 - الموقع (للموبايل) موجود بس **مقفول افتراضيًا** (الإعدادات ← 🌐 الموقع).

@@ -1,5 +1,9 @@
 name: Build Warehouse (offline)
 
+# كل عميل ليه فولدر في clients/<slug>/ (client.json + logo.png) — الـ build بيطلّع Setup لكل عميل
+# بالاسم والشعار بتوعه مقفولين جوه البرنامج: Warehouse-Setup-<slug>.exe
+# Warehouse-Setup.exe (اللينك القديم) = نسخة عميل فرحات، علشان التحديث القديم يفضل شغال.
+
 on:
   push:
     branches: [ main ]
@@ -9,8 +13,22 @@ permissions:
   contents: write
 
 jobs:
+  clients:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.ls.outputs.list }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: ls
+        run: echo "list=$(ls -d clients/*/ | xargs -n1 basename | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: clients
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        client: ${{ fromJson(needs.clients.outputs.list) }}
     steps:
       - uses: actions/checkout@v5
 
@@ -21,17 +39,20 @@ jobs:
       - name: Install requirements
         run: pip install -r requirements.txt
 
+      - name: Brand (${{ matrix.client }})
+        run: python tools/make_brand.py ${{ matrix.client }}
+
       - name: Stamp version
         shell: pwsh
         run: |
           $d = (Get-Date).AddHours(3).ToString("yyyy-MM-dd HH:mm")
           $n = ${{ github.run_number }}
           (Get-Content Warehouse_app.py -Raw -Encoding utf8) -replace 'APP_BUILD = 0                 # BUILD_NUMBER', "APP_BUILD = $n" -replace 'APP_BUILD_DATE = ""           # BUILD_DATE', "APP_BUILD_DATE = `"$d`"" | Set-Content Warehouse_app.py -Encoding utf8NoBOM -NoNewline
-          (Get-Content installer.iss -Raw -Encoding utf8) -replace 'AppVersion=1.0', "AppVersion=1.0.$n" | Set-Content installer.iss -Encoding utf8 -NoNewline
+          (Get-Content installer.iss -Raw -Encoding utf8) -replace 'AppVersion=1.0', "AppVersion=1.0.$n" -replace 'OutputBaseFilename=Warehouse-Setup', "OutputBaseFilename=Warehouse-Setup-${{ matrix.client }}" | Set-Content installer.iss -Encoding utf8 -NoNewline
           Select-String -Path Warehouse_app.py -Pattern '^APP_BUILD'
 
       - name: Build Warehouse (offline) exe
-        run: pyinstaller --noconfirm --onefile --windowed --name Warehouse --add-data "ui;ui" --collect-all webview --hidden-import clr --hidden-import psycopg2 --collect-submodules google.auth --collect-submodules google.oauth2 zalat_ui.py
+        run: pyinstaller --noconfirm --onefile --windowed --name Warehouse --add-data "ui;ui" --hidden-import client_brand --collect-all webview --hidden-import clr --hidden-import psycopg2 --collect-submodules google.auth --collect-submodules google.oauth2 zalat_ui.py
 
       - name: Get SumatraPDF (direct print dialog)
         shell: pwsh
@@ -50,13 +71,24 @@ jobs:
 
       - uses: actions/upload-artifact@v5
         with:
-          name: Warehouse-Setup
-          path: Output/Warehouse-Setup.exe
+          name: Warehouse-Setup-${{ matrix.client }}
+          path: Output/Warehouse-Setup-${{ matrix.client }}.exe
 
-      - name: Publish release (direct download link)
-        shell: pwsh
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish release (direct download links)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $n = ${{ github.run_number }}
-          gh release create "V1.0.$n" Output/Warehouse-Setup.exe --title "Warehouse V1.0.$n" --notes "Warehouse offline V1.0.$n" --latest --repo "${{ github.repository }}"
+          n=${{ github.run_number }}
+          ls -la out
+          # اللينك القديم (Warehouse-Setup.exe) = نسخة فرحات
+          if [ -f out/Warehouse-Setup-farahat.exe ]; then cp out/Warehouse-Setup-farahat.exe out/Warehouse-Setup.exe; fi
+          gh release create "V1.0.$n" out/*.exe --title "Warehouse V1.0.$n" --notes "Warehouse offline V1.0.$n — نسخة لكل عميل: Warehouse-Setup-<العميل>.exe" --latest --repo "${{ github.repository }}"
