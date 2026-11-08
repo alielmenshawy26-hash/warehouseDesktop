@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2a4d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="المخازن">
+<title>سيستم المخازن والمبيعات</title>
+<link rel="stylesheet" href="fonts/cairo.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="modal-root"></div>
+<div id="toasts" aria-live="polite"></div>
+<script src="web.js"></script>
+<script src="app.js"></script>
+<script>if ("serviceWorker" in navigator && window.ZALAT_WEB) navigator.serviceWorker.register("sw.js").catch(() => {});</script>
+</body>
+</html>

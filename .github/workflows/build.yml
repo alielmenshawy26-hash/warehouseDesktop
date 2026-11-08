@@ -1,42 +1,62 @@
-
-name: Build Windows installer
+name: Build Warehouse (offline)
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-      - name: Download project
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Stamp version
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
+          $d = (Get-Date).AddHours(3).ToString("yyyy-MM-dd HH:mm")
+          $n = ${{ github.run_number }}
+          (Get-Content Warehouse_app.py -Raw -Encoding utf8) -replace 'APP_BUILD = 0                 # BUILD_NUMBER', "APP_BUILD = $n" -replace 'APP_BUILD_DATE = ""           # BUILD_DATE', "APP_BUILD_DATE = `"$d`"" | Set-Content Warehouse_app.py -Encoding utf8NoBOM -NoNewline
+          (Get-Content installer.iss -Raw -Encoding utf8) -replace 'AppVersion=1.0', "AppVersion=1.0.$n" | Set-Content installer.iss -Encoding utf8 -NoNewline
+          Select-String -Path Warehouse_app.py -Pattern '^APP_BUILD'
 
-      - name: Build application
+      - name: Build Warehouse (offline) exe
+        run: pyinstaller --noconfirm --onefile --windowed --name Warehouse --add-data "ui;ui" --collect-all webview --hidden-import clr --hidden-import psycopg2 --collect-submodules google.auth --collect-submodules google.oauth2 zalat_ui.py
+
+      - name: Get SumatraPDF (direct print dialog)
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile --name "Warehouse" "Warehouse_app.py"
+          New-Item -ItemType Directory -Force tools | Out-Null
+          try {
+            Invoke-WebRequest "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64.zip" -OutFile sumatra.zip
+            Expand-Archive sumatra.zip -DestinationPath sumatra -Force
+            Copy-Item (Get-ChildItem sumatra -Filter *.exe -Recurse | Select-Object -First 1).FullName tools\SumatraPDF.exe
+          } catch { Write-Host "Sumatra download failed: $_" }
+          if (!(Test-Path tools\SumatraPDF.exe)) { choco install sumatrapdf.portable -y --no-progress; Copy-Item (Get-ChildItem "$env:ChocolateyInstall\lib\sumatrapdf.portable" -Filter SumatraPDF*.exe -Recurse | Select-Object -First 1).FullName tools\SumatraPDF.exe }
+          Get-Item tools\SumatraPDF.exe
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
+      - name: Build Warehouse (offline) installer
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss'
 
-      - name: Build installer
-        shell: cmd
-        run: |
-          ISCC.exe "Installer.iss"
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Warehouse-Setup
-          path: Output/*.exe
-          if-no-files-found: error
+          path: Output/Warehouse-Setup.exe
+
+      - name: Publish release (direct download link)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $n = ${{ github.run_number }}
+          gh release create "V1.0.$n" Output/Warehouse-Setup.exe --title "Warehouse V1.0.$n" --notes "Warehouse offline V1.0.$n" --latest --repo "${{ github.repository }}"

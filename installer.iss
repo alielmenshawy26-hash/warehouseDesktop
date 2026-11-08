@@ -1,34 +1,44 @@
-#define MyAppName "سيستم المخازن والمبيعات"
-#define MyAppVersion "0.1.0"
-#define MyAppExeName "Warehouse.exe"
-
+; برنامج تسطيب «سيستم المخازن والمبيعات» — النسخة الأوفلاين (نفس كود زلط، بداتا ومجلد منفصلين)
 [Setup]
 AppId={{A6F149A3-9B22-47B0-AE63-3B1D93E64E01}
-AppName={#MyAppName}
-AppVersion={#MyAppVersion}
+AppName=Warehouse
+AppVersion=1.0
+AppPublisher=Ali ElMenshawy
 DefaultDirName={autopf}\WarehouseDesktop
-DefaultGroupName={#MyAppName}
+DefaultGroupName=Warehouse
+DisableProgramGroupPage=yes
 OutputDir=Output
 OutputBaseFilename=Warehouse-Setup
-Compression=lzma
+Compression=lzma2
 SolidCompression=yes
-WizardStyle=modern
 PrivilegesRequired=admin
-ArchitecturesInstallIn64BitMode=x64
-UninstallDisplayIcon={app}\{#MyAppExeName}
-
-[Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl"
-
-[Files]
-Source: "dist\\Warehouse.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-[Icons]
-Name: "{autoprograms}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"
-Name: "{autodesktop}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"; Tasks: desktopicon
+ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=force
+RestartApplications=no
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+Name: "desktopicon"; Description: "Desktop shortcut"; GroupDescription: "Shortcuts:"
+
+[Files]
+Source: "dist\Warehouse.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "server_setup.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "server_setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "tools\SumatraPDF.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+
+[Icons]
+Name: "{group}\Warehouse"; Filename: "{app}\Warehouse.exe"
+Name: "{group}\Server setup (main PC only)"; Filename: "{app}\server_setup.bat"
+Name: "{autodesktop}\Warehouse"; Filename: "{app}\Warehouse.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\Warehouse.exe"; Description: "Run Warehouse"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// قبل التسطيب: يقفل أي نسخة شغالة من البرنامج علشان الملف يتبدل
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM Warehouse.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(1500);
+  Result := '';
+end;
