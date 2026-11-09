@@ -27,7 +27,7 @@ DAYLOCK = "__DAYLOCK__"     # الواجهة بتطلب باسوورد المح�
 ALL_SCREENS = ["home", "inv:مبيعات", "inv:مشتريات", "inv:مرتجع مبيعات", "inv:مرتجع مشتريات", "log", "vch:new", "vch:log",
                "acc:statement", "acc:balances", "acc:cash", "acc:subcash", "par:list", "itm:list", "itm:stock", "itm:sales", "itm:buys", "itm:damaged",
                "smp:items", "smp:out", "smp:in", "emp:list", "emp:att", "emp:attlog", "emp:attreq", "emp:repreq", "emp:veh",
-               "rep:daily", "rep:monthly", "rep:profit", "rep:reps", "rep:targets", "rep:log", "req", "set:main", "acc:assets", "prd:new", "prd:log"]
+               "rep:daily", "rep:monthly", "rep:profit", "rep:reps", "rep:targets", "rep:log", "req", "set:main", "acc:assets", "prd:new", "prd:log", "prd:sell"]
 OWNER_ONLY_SCREENS = {"rep:profit", "set:users", "acc:assets", "rep:monthly"}
 DEFAULT_SCREENS = {
     W.ROLE_ACC: [k for k in ALL_SCREENS if k not in OWNER_ONLY_SCREENS],
@@ -52,6 +52,7 @@ for _keys, _methods in [
     (["itm:sales", "itm:buys"], "items_flow"),
     (["itm:damaged"], "damaged save_damaged delete_damaged"),
     (["prd:new", "prd:log"], "production_setup save_production production_list delete_production print_production"),
+    (["prd:sell"], "sell_setup quick_sale"),
     (["smp:items", "smp:out", "smp:in"], "sample_items save_sample_item delete_sample_item sample_moves samples save_sample delete_sample"),
     (["rep:profit"], "profit profit_compare"),
     (["rep:reps"], "reps_report rep_detail"),
@@ -1258,7 +1259,10 @@ class Api:
         self._need_login()
         today = _today(); out = []
         with W.db() as c:
-            direct = {r[0]: float(r[1]) for r in c.execute("SELECT item_id,SUM(qty) FROM damaged WHERE d_date<=? GROUP BY item_id", (today,))}
+            direct = {r[0]: float(r[1]) for r in c.execute("SELECT item_id,SUM(qty) FROM damaged WHERE d_date<=? AND production_id IS NULL GROUP BY item_id", (today,))}
+            pin, pout = {}, {}                       # الإنتاج: العيش وارد والدقيق صادر (مش هالك)
+            for r in c.execute("SELECT item_id, SUM(CASE WHEN qty<0 THEN -qty ELSE 0 END), SUM(CASE WHEN qty>0 THEN qty ELSE 0 END) FROM damaged WHERE d_date<=? AND production_id IS NOT NULL GROUP BY item_id", (today,)):
+                pin[r[0]] = float(r[1] or 0); pout[r[0]] = float(r[2] or 0)
             after_map = W.stock_map(c, "9999-12-31")
             for r in c.execute("SELECT it.*,"
                                "COALESCE(SUM(CASE WHEN i.kind='مشتريات' OR (i.kind='مرتجع مبيعات' AND COALESCE(l.damaged,0)=0) THEN l.qty END),0) inn,"
@@ -1267,10 +1271,11 @@ class Api:
                                f"FROM items it LEFT JOIN (invoice_lines l JOIN invoices i ON i.id=l.invoice_id AND {W.EFFECTIVE_DATE_SQL}<=?) ON l.item_id=it.id "
                                "GROUP BY it.id ORDER BY it.name", (today,)).fetchall():
                 d = direct.get(r["id"], 0.0); op = float(r["opening_qty"] or 0)
-                st = op + float(r["inn"]) - float(r["outq"]) - d; mn = float(r["min_stock"] or 0)
+                inn = float(r["inn"]) + pin.get(r["id"], 0.0); outq = float(r["outq"]) + pout.get(r["id"], 0.0)
+                st = op + inn - outq - d; mn = float(r["min_stock"] or 0)
                 after = after_map.get(r["id"], 0.0); res = st - after
                 out.append({"id": r["id"], "code": r["code"] or "", "name": r["name"], "unit": r["unit"] or "", "buy": _r2(r["buy_price"]), "sell": _r2(r["sell_price"]),
-                            "opening": _r2(op), "in": _r2(r["inn"]), "out": _r2(r["outq"]), "dmg": _r2(d + float(r["dret"])), "stock": _r2(st),
+                            "opening": _r2(op), "in": _r2(inn), "out": _r2(outq), "dmg": _r2(d + float(r["dret"])), "stock": _r2(st),
                             "reserved": _r2(res) if abs(res) > 1e-9 else 0, "after": _r2(after), "low": bool(mn > 0 and st <= mn)})
         return out
 
@@ -1362,7 +1367,22 @@ class Api:
         return True
 
     # ---------- الإنتاج (للأفران) ----------
-    BREADS = ("بلدي", "سياحي")
+    BREADS = ("سياحي",)                 # الفرن بيعمل نوع واحد (البلدي هو السياحي)
+    SHBAK = "زبون الشباك"
+    TRAY_SIZES = (21, 24, 25)
+
+    @staticmethod
+    def _bread_item(c, bread="سياحي"):
+        """صنف العيش في المخزن (بيتعمل لوحده أول مرة): الإنتاج بيدخّله والبيع بيطلّعه."""
+        name = f"عيش {bread}"
+        r = c.execute("SELECT id FROM items WHERE name=?", (name,)).fetchone()
+        if r: return r[0]
+        return c.execute("INSERT INTO items(code,name,unit,sell_price,buy_price) VALUES(?,?,?,?,?)", (None, name, "رغيف", 0, 0)).lastrowid
+
+    def _shbak(self, c):
+        r = c.execute("SELECT id FROM parties WHERE name=?", (self.SHBAK,)).fetchone()
+        if r: return r[0]
+        return c.execute("INSERT INTO parties(name,kind) VALUES(?,?)", (self.SHBAK, "عميل")).lastrowid
 
     def _need_prod(self):
         self._need_login()
@@ -1379,9 +1399,10 @@ class Api:
     @staticmethod
     def _prod_calc(r):
         bags, bag_kg = float(r["bags"] or 0), float(r["bag_kg"] or 0) or 50.0
-        trays, per = float(r["trays"] or 0), float(r["per_tray"] or 0); loaf_g = float(r["loaf_g"] or 0)
+        trays, per = float(r["trays"] or 0), float(r["per_tray"] or 0)
         loaves = trays * per; flour_kg = bags * bag_kg
-        return {"loaves": loaves, "flour_kg": flour_kg, "bread_kg": loaves * loaf_g / 1000.0,
+        loaf_g = (flour_kg * 1000.0 / loaves) if loaves else 0.0          # وزن الرغيف = وزن الدقيق ÷ عدد الأرغفة
+        return {"loaves": loaves, "flour_kg": flour_kg, "bread_kg": flour_kg, "loaf_g": loaf_g,
                 "flour_per_loaf": (flour_kg * 1000.0 / loaves) if loaves else 0.0,     # جرام دقيق في الرغيف
                 "loaves_per_bag": (loaves / bags) if bags else 0.0, "trays_per_bag": (trays / bags) if bags else 0.0}
 
@@ -1394,24 +1415,24 @@ class Api:
             last = {}
             for b in self.BREADS:          # آخر إنتاج لكل نوع = القيم الافتراضية (الطاولة فيها كام رغيف، وزن الرغيف، صنف الدقيق)
                 r = c.execute("SELECT * FROM production WHERE bread=? ORDER BY p_date DESC, id DESC LIMIT 1", (b,)).fetchone()
-                last[b] = {"per_tray": _r2(r["per_tray"]), "loaf_g": _r2(r["loaf_g"]), "bag_kg": _r2(r["bag_kg"] or 50), "flour_item_id": r["flour_item_id"]} if r else \
-                          {"per_tray": 0, "loaf_g": 0, "bag_kg": 50, "flour_item_id": None}
+                last[b] = {"per_tray": _r2(r["per_tray"]), "bag_kg": _r2(r["bag_kg"] or 50), "flour_item_id": r["flour_item_id"]} if r else \
+                          {"per_tray": 0, "bag_kg": 50, "flour_item_id": None}
         guess = next((i["id"] for i in items if "دقيق" in W._norm(i["name"])), None)
-        return {"breads": list(self.BREADS), "items": items, "last": last, "flour_guess": guess, "today": _today()}
+        return {"breads": list(self.BREADS), "items": items, "last": last, "flour_guess": guess, "today": _today(), "tray_sizes": list(self.TRAY_SIZES)}
 
     def save_production(self, v, neg_pw=None):
         self._need_prod()
         try:
             d = W.check_date(v.get("date") or _today())
             bags = W._f(v.get("bags") or 0); bag_kg = W._f(v.get("bag_kg") or 50); trays = W._f(v.get("trays") or 0)
-            per = W._f(v.get("per_tray") or 0); loaf_g = W._f(v.get("loaf_g") or 0)
+            per = W._f(v.get("per_tray") or 0)
         except ValueError: raise UIError("راجع الأرقام والتاريخ")
-        bread = (v.get("bread") or "").strip()
-        if bread not in self.BREADS: raise UIError("اختار نوع العيش (بلدي أو سياحي)")
+        bread = (v.get("bread") or self.BREADS[0]).strip()
+        if bread not in self.BREADS: bread = self.BREADS[0]
         if bags <= 0: raise UIError("عدد شكاير الدقيق لازم يكون أكبر من صفر")
         if bag_kg <= 0: raise UIError("وزن الشيكارة لازم يكون أكبر من صفر")
         if trays <= 0 or per <= 0: raise UIError("اكتب عدد الطاولات وعدد الأرغفة في الطاولة")
-        if loaf_g < 0: raise UIError("وزن الرغيف مش بالسالب")
+        loaf_g = bags * bag_kg * 1000.0 / (trays * per)
         pid = int(v["id"]) if v.get("id") else None
         fid = int(v["flour_item_id"]) if v.get("flour_item_id") else None
         deduct = bool(v.get("deduct", True)) and fid is not None
@@ -1433,19 +1454,22 @@ class Api:
                     pid = c.execute("INSERT INTO production(p_date,created_at,bread,flour_item_id,bags,bag_kg,trays,per_tray,loaf_g,notes,by_user) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                                     (d, W.now_ts(), bread, fid, bags, bag_kg, trays, per, loaf_g, (v.get("notes") or "").strip(), user)).lastrowid
                     old_items = []
-                fname = ""
+                fname = ""; ts = W.now_ts(); fcost = 0.0
                 if deduct:
                     it = c.execute("SELECT name,unit FROM items WHERE id=?", (fid,)).fetchone()
                     if not it: raise UIError("صنف الدقيق مش موجود")
                     fname = it["name"]; q = self._flour_qty(it["unit"], bags, bag_kg)
-                    cost = W.fifo_preview(c, [(fid, q)])[0]
+                    cost = W.fifo_preview(c, [(fid, q)])[0]; fcost = cost * q
                     c.execute("INSERT INTO damaged(d_date,created_at,item_id,qty,unit_cost,notes,production_id) VALUES(?,?,?,?,?,?,?)",
-                              (d, W.now_ts(), fid, q, cost, f"إنتاج عيش {bread}", pid))
-                W.check_stock(c, list({*old_items, *([fid] if deduct else [])}))
+                              (d, ts, fid, q, cost, f"إنتاج عيش {bread}", pid))
+                bid = self._bread_item(c, bread); loaves = trays * per          # العيش اللي اتعمل بيدخل المخزن (سالب في جدول الصرف = وارد)
+                c.execute("INSERT INTO damaged(d_date,created_at,item_id,qty,unit_cost,notes,production_id) VALUES(?,?,?,?,?,?,?)",
+                          (d, ts, bid, -loaves, fcost / loaves, f"إنتاج عيش {bread}", pid))
+                W.check_stock(c, list({*old_items, bid, *([fid] if deduct else [])}))
                 k = self._prod_calc({"bags": bags, "bag_kg": bag_kg, "trays": trays, "per_tray": per, "loaf_g": loaf_g})
                 W.log(c, "تعديل إنتاج" if old else "تسجيل إنتاج",
                       f"عيش {bread} {d}: {W.fmt(bags)} شيكارة{(' ' + fname) if fname else ''} ← {W.fmt(trays)} طاولة × {W.fmt(per)} = {W.fmt(k['loaves'])} رغيف")
-        except W.NegativeStock as e: return {"ok": False, "need": "neg", "error": str(e) + "\nرصيد الدقيق هيبقى بالسالب — مسموح بس بكلمة سر المالك."}
+        except W.NegativeStock as e: return {"ok": False, "need": "neg", "error": str(e) + "\nالرصيد هيبقى بالسالب — مسموح بس بكلمة سر المالك."}
         finally: W._TLS.allow_neg = None
         return {"ok": True, "id": pid}
 
@@ -1457,7 +1481,7 @@ class Api:
         with W.db() as c:
             eng = None
             cost_of = {}
-            dm = c.execute("SELECT id, production_id, qty, unit_cost FROM damaged WHERE production_id IS NOT NULL AND d_date BETWEEN ? AND ?", (a, b)).fetchall()
+            dm = c.execute("SELECT id, production_id, qty, unit_cost FROM damaged WHERE production_id IS NOT NULL AND qty>0 AND d_date BETWEEN ? AND ?", (a, b)).fetchall()
             if dm:
                 eng = W.fifo_engine(c)
                 for r in dm: cost_of[r["production_id"]] = cost_of.get(r["production_id"], 0.0) + float(r["qty"] or 0) * eng["dmg"].get(r["id"], float(r["unit_cost"] or 0))
@@ -1466,7 +1490,7 @@ class Api:
                 k = self._prod_calc(r); cost = cost_of.get(r["id"], 0.0)
                 rows.append({"id": r["id"], "date": r["p_date"], "time": W.fmt_time(r["created_at"]), "bread": r["bread"], "flour": r["fname"] or "", "flour_item_id": r["flour_item_id"],
                              "deducted": r["id"] in cost_of, "bags": _r2(r["bags"]), "bag_kg": _r2(r["bag_kg"]), "trays": _r2(r["trays"]), "per_tray": _r2(r["per_tray"]),
-                             "loaf_g": _r2(r["loaf_g"]), "loaves": _r2(k["loaves"]), "flour_kg": _r2(k["flour_kg"]), "bread_kg": _r2(k["bread_kg"]),
+                             "loaf_g": _r2(k["loaf_g"]), "loaves": _r2(k["loaves"]), "flour_kg": _r2(k["flour_kg"]), "bread_kg": _r2(k["bread_kg"]),
                              "flour_per_loaf": _r2(k["flour_per_loaf"]), "loaves_per_bag": _r2(k["loaves_per_bag"]), "cost": _r2(cost),
                              "loaf_cost": round(cost / k["loaves"], 4) if k["loaves"] else 0, "notes": r["notes"] or "", "user": r["by_user"] or ""})
         # ملخص لكل يوم ولكل نوع
@@ -1487,17 +1511,79 @@ class Api:
                            "cost": _r2(sum(r["cost"] for r in rs)), "loaves_per_bag": _r2(loaves / bags) if bags else 0}
         return {"rows": rows, "summary": summary, "totals": tot}
 
-    def delete_production(self, pid):
+    def delete_production(self, pid, neg_pw=None):
         self._need_prod()
         with W.db() as c:
             r = c.execute("SELECT * FROM production WHERE id=?", (pid,)).fetchone()
         if not r: raise UIError("الإنتاج ده مش موجود")
         self._day(r["p_date"])
+        who = W.verify_owner_password(neg_pw) if neg_pw else None
+        if neg_pw and not who: return {"ok": False, "need": "neg", "error": "كلمة سر المالك غير صحيحة"}
+        try:
+            W._TLS.allow_neg = who
+            with W.db() as c:
+                its = [x[0] for x in c.execute("SELECT item_id FROM damaged WHERE production_id=?", (pid,))]
+                c.execute("DELETE FROM damaged WHERE production_id=?", (pid,))
+                c.execute("DELETE FROM production WHERE id=?", (pid,))
+                W.check_stock(c, its)
+                W.log(c, "حذف إنتاج", f"عيش {r['bread']} {r['p_date']}: {W.fmt(r['bags'])} شيكارة ← {W.fmt(float(r['trays'] or 0) * float(r['per_tray'] or 0))} رغيف")
+        except W.NegativeStock as e: return {"ok": False, "need": "neg", "error": str(e) + "\nالعيش ده اتباع — لو اتحذف الرصيد هيبقى بالسالب (مسموح بس بكلمة سر المالك)."}
+        finally: W._TLS.allow_neg = None
+        return {"ok": True}
+
+    # ---------- بيع الشباك (كام رغيف + بكام = فاتورة نقدي على طول) ----------
+    def sell_setup(self):
+        self._need_prod()
+        today = _today()
         with W.db() as c:
-            c.execute("DELETE FROM damaged WHERE production_id=?", (pid,))
-            c.execute("DELETE FROM production WHERE id=?", (pid,))
-            W.log(c, "حذف إنتاج", f"عيش {r['bread']} {r['p_date']}: {W.fmt(r['bags'])} شيكارة ← {W.fmt(float(r['trays'] or 0) * float(r['per_tray'] or 0))} رغيف")
-        return True
+            bid = self._bread_item(c); shb = self._shbak(c)
+            it = c.execute("SELECT name,unit,sell_price FROM items WHERE id=?", (bid,)).fetchone()
+            prod = -float(c.execute("SELECT COALESCE(SUM(qty),0) FROM damaged WHERE item_id=? AND production_id IS NOT NULL AND qty<0 AND d_date=?", (bid, today)).fetchone()[0])
+            sold = c.execute("SELECT COALESCE(SUM(CASE WHEN i.kind='مبيعات' THEN l.qty ELSE -l.qty END),0), "
+                             "COALESCE(SUM(CASE WHEN i.kind='مبيعات' THEN l.qty*l.price ELSE -l.qty*l.price END),0) "
+                             "FROM invoice_lines l JOIN invoices i ON i.id=l.invoice_id WHERE l.item_id=? AND i.kind IN ('مبيعات','مرتجع مبيعات') AND i.inv_date=?", (bid, today)).fetchone()
+            cash = float(c.execute("SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN invoices i ON i.id=p.invoice_id JOIN invoice_lines l ON l.invoice_id=i.id "
+                                   "WHERE l.item_id=? AND i.kind='مبيعات' AND i.inv_date=?", (bid, today)).fetchone()[0])
+            stock = W.stock_of(c, bid)
+            custs = [{"id": r["id"], "name": r["name"]} for r in c.execute("SELECT id,name FROM parties WHERE kind LIKE '%عميل%' AND id<>? ORDER BY name", (shb,)).fetchall()]
+            recent = []
+            for r in c.execute(f"SELECT i.id,i.number,i.created_at,p.name party,l.qty,l.price,{W.NET_SQL} net, COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) paid, "
+                               "COALESCE(i.by_user,'') by_user FROM invoices i JOIN invoice_lines l ON l.invoice_id=i.id LEFT JOIN parties p ON p.id=i.party_id "
+                               "WHERE l.item_id=? AND i.kind='مبيعات' AND i.inv_date=? ORDER BY i.created_at DESC, i.id DESC LIMIT 30", (bid, today)).fetchall():
+                recent.append({"id": r["id"], "number": r["number"], "time": W.fmt_time(r["created_at"]), "party": r["party"] or "", "qty": _r2(r["qty"]),
+                               "net": _r2(r["net"]), "paid": _r2(r["paid"]), "user": r["by_user"]})
+        return {"item_id": bid, "item": it["name"], "unit": it["unit"] or "رغيف", "price": _r2(it["sell_price"]), "shbak_id": shb, "customers": custs,
+                "today": {"produced": _r2(prod), "sold": _r2(sold[0]), "amount": _r2(sold[1]), "cash": _r2(cash), "stock": _r2(stock)}, "recent": recent, "date": today}
+
+    def quick_sale(self, qty, amount, party_id=None, cash=True):
+        """البياع بيكتب كام رغيف وبكام → فاتورة مبيعات بتتسجل على طول (الشباك = نقدي)."""
+        self._need_prod()
+        try: qty = W._f(qty); amount = W._f(amount)
+        except ValueError: raise UIError("اكتب عدد الأرغفة والمبلغ بالأرقام")
+        if qty <= 0: raise UIError("اكتب كام رغيف")
+        if amount < 0: raise UIError("المبلغ مش بالسالب")
+        d = _today(); self._day(d)
+        with W.db() as c:
+            bid = self._bread_item(c); shb = self._shbak(c)
+            it = c.execute("SELECT name,unit FROM items WHERE id=?", (bid,)).fetchone()
+            pid = int(party_id) if party_id else shb
+            if not c.execute("SELECT 1 FROM parties WHERE id=?", (pid,)).fetchone(): raise UIError("العميل مش موجود")
+        is_shb = pid == shb
+        if is_shb: cash = True
+        lines = [{"item_id": bid, "name": it["name"], "unit": it["unit"] or "رغيف", "qty": qty, "price": amount / qty, "damaged": 0}]
+        try:
+            dd = W.prepare_invoice("مبيعات", lines, pid, "", d, "", 0, amount if cash else 0, "نقدي" if cash else "آجل", "بيع سريع" + (" — الشباك" if is_shb else ""), None, None)
+        except W.InvoiceInputError as e: raise UIError(str(e))
+        try:
+            W._TLS.allow_neg = "بيع الشباك"                  # البيع ميقفش — لو الرصيد سالب بيبان في لوحة النهارده
+            inv_id, number = W.persist_invoice(dd, override=False, auto_no=True)
+        except W.CreditLimitExceeded as e:
+            raise UIError(f"العميل «{e.name}» هيعدّي الحد الائتماني ({W.fmt(e.limit)}) — سجّلها من فاتورة المبيعات بكلمة سر المالك")
+        finally: W._TLS.allow_neg = None
+        with W.db() as c:
+            c.execute("UPDATE invoices SET by_user=? WHERE id=?", (W.CURRENT_USER.get("username") or "", inv_id))
+            W.log(c, "بيع سريع", f"{W.fmt(qty)} رغيف بـ {W.fmt(amount)} — {'الشباك' if is_shb else 'عميل'} (فاتورة {number})")
+        return {"ok": True, "id": inv_id, "number": number}
 
     def print_production(self, d_from, d_to, bread="الكل"):
         self._need_prod()
@@ -1505,13 +1591,13 @@ class Api:
         if not d["rows"]: raise UIError("مفيش إنتاج في الفترة دي")
         with W.db() as c: st = c.execute("SELECT * FROM settings WHERE id=1").fetchone()
         esc = W.esc; f = W.fmt
-        tot_rows = "".join(f"<tr><td>عيش {b}</td><td>{f(t['bags'])}</td><td>{f(t['trays'])}</td><td><b>{f(t['loaves'])}</b></td><td>{f(t['loaves_per_bag'])}</td><td>{f(t['bread_kg'])}</td></tr>"
+        tot_rows = "".join(f"<tr><td>{f(t['bags'])}</td><td>{f(t['trays'])}</td><td><b>{f(t['loaves'])}</b></td><td>{f(t['loaves_per_bag'])}</td><td>{f(t['bread_kg'])}</td></tr>"
                            for b, t in d["totals"].items())
-        sum_rows = "".join(f"<tr><td>{x['date']}</td><td>{x['bread']}</td><td>{f(x['bags'])}</td><td>{f(x['trays'])}</td><td><b>{f(x['loaves'])}</b></td><td>{f(x['loaves_per_bag'])}</td><td>{f(x['bread_kg'])}</td></tr>"
+        sum_rows = "".join(f"<tr><td>{x['date']}</td><td>{f(x['bags'])}</td><td>{f(x['trays'])}</td><td><b>{f(x['loaves'])}</b></td><td>{f(x['loaves_per_bag'])}</td><td>{f(x['bread_kg'])}</td></tr>"
                            for x in d["summary"])
-        det = "".join(f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>{r['bread']}</td><td>{f(r['bags'])}</td><td>{f(r['trays'])}</td><td>{f(r['per_tray'])}</td><td><b>{f(r['loaves'])}</b></td>"
-                      f"<td>{f(r['loaf_g'])}</td><td>{f(r['bread_kg'])}</td><td>{f(r['flour_per_loaf'])}</td><td class='nm'>{esc(r['notes'])}</td></tr>" for r in d["rows"])
-        title = "تقرير الإنتاج" + ("" if bread in ("الكل", "", None) else f" — عيش {esc(bread)}")
+        det = "".join(f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>{f(r['bags'])}</td><td>{f(r['trays'])}</td><td>{f(r['per_tray'])}</td><td><b>{f(r['loaves'])}</b></td>"
+                      f"<td>{f(r['loaf_g'])}</td><td>{f(r['bread_kg'])}</td><td class='nm'>{esc(r['notes'])}</td></tr>" for r in d["rows"])
+        title = "تقرير الإنتاج"
         html = f"""<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>{title}</title><style>
         @page{{size:A4;margin:10mm}}body{{font-family:Tahoma,Arial,sans-serif;font-size:12.5px;color:#111;margin:0}}
         .hd{{display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #333;padding-bottom:6px}}.hd img{{height:58px}}
@@ -1520,9 +1606,9 @@ class Api:
         thead{{display:table-header-group}}tr{{break-inside:avoid}}</style>
         <div class="hd"><div><h1>{esc(st['company'] or W.DEFAULT_COMPANY)}</h1><div>{esc(st['tagline'] or '')}</div></div><img src="{W.logo_data_uri()}"></div>
         <h2>{title}</h2><div class="sub">من {d_from} إلى {d_to}</div>
-        <h3>الإجمالي</h3><table><thead><tr><th>النوع</th><th>شكاير الدقيق</th><th>الطاولات</th><th>الأرغفة</th><th>رغيف/شيكارة</th><th>الوزن (كجم)</th></tr></thead><tbody>{tot_rows}</tbody></table>
-        <h3>كل يوم</h3><table><thead><tr><th>التاريخ</th><th>النوع</th><th>شكاير</th><th>طاولات</th><th>أرغفة</th><th>رغيف/شيكارة</th><th>الوزن (كجم)</th></tr></thead><tbody>{sum_rows}</tbody></table>
-        <h3>التفاصيل</h3><table><thead><tr><th>التاريخ</th><th>الوقت</th><th>النوع</th><th>شكاير</th><th>طاولات</th><th>رغيف/طاولة</th><th>الأرغفة</th><th>وزن الرغيف (جم)</th><th>الوزن (كجم)</th><th>دقيق/رغيف (جم)</th><th>ملاحظات</th></tr></thead>
+        <h3>الإجمالي</h3><table><thead><tr><th>شكاير الدقيق</th><th>الطاولات</th><th>الأرغفة</th><th>رغيف/شيكارة</th><th>الدقيق (كجم)</th></tr></thead><tbody>{tot_rows}</tbody></table>
+        <h3>كل يوم</h3><table><thead><tr><th>التاريخ</th><th>شكاير</th><th>طاولات</th><th>أرغفة</th><th>رغيف/شيكارة</th><th>الدقيق (كجم)</th></tr></thead><tbody>{sum_rows}</tbody></table>
+        <h3>التفاصيل</h3><table><thead><tr><th>التاريخ</th><th>الوقت</th><th>شكاير</th><th>طاولات</th><th>رغيف/طاولة</th><th>الأرغفة</th><th>وزن الرغيف (جم)</th><th>الدقيق (كجم)</th><th>ملاحظات</th></tr></thead>
         <tbody>{det}</tbody></table></html>"""
         path = os.path.join(W.PRINT_DIR, "production.html"); os.makedirs(W.PRINT_DIR, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh: fh.write(html)

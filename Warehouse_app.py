@@ -685,7 +685,8 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS production(id INTEGER PRIMARY KEY, p_date TEXT NOT NULL, created_at TEXT, bread TEXT NOT NULL,
                      flour_item_id INTEGER, bags REAL DEFAULT 0, bag_kg REAL DEFAULT 50, trays REAL DEFAULT 0, per_tray REAL DEFAULT 0,
                      loaf_g REAL DEFAULT 0, notes TEXT DEFAULT '', by_user TEXT DEFAULT '')""")
-        add_col(c, "damaged", "production_id", "INTEGER")      # سطر الدقيق اللي اتصرف في إنتاج (مش هالك)
+        add_col(c, "damaged", "production_id", "INTEGER")
+        add_col(c, "invoices", "by_user", "TEXT DEFAULT ''")      # مين سجّل الفاتورة (بيع الشباك)      # سطر الدقيق اللي اتصرف في إنتاج (مش هالك)
         add_col(c, "settings", "logo_b64", "TEXT DEFAULT ''")    # (قديم) — الشعار دلوقتي مقفول جوه النسخة
         # اسم الشركة وتحت الاسم والشعار: دايمًا بتوع النسخة دي (محدش يقدر يغيّرهم ويبيع البرنامج باسمه)
         c.execute("UPDATE settings SET company=?, tagline=?, logo_b64='' WHERE id=1", (BRAND_COMPANY, BRAND_TAGLINE))
@@ -1487,10 +1488,12 @@ def fifo_engine(c):
                        "FROM invoice_lines l JOIN invoices i ON i.id=l.invoice_id WHERE l.item_id IS NOT NULL").fetchall():
         rank = {"مشتريات": 0, "مرتجع مبيعات": 1, "مرتجع مشتريات": 2, "مبيعات": 3}.get(r[5], 4)
         ev.append((r[6] or "", r[7] or "", rank, r[8], r[0], "L", r[1], float(r[2] or 0), float(r[3] or 0), r[4], r[5]))
-    for r in c.execute("SELECT id, item_id, qty, d_date, COALESCE(created_at,'') FROM damaged").fetchall():
-        ev.append((r[3] or "", r[4] or "", 3, 0, r[0], "D", r[1], float(r[2] or 0), 0.0, 0, "هالك"))
+    for r in c.execute("SELECT id, item_id, qty, d_date, COALESCE(created_at,''), production_id FROM damaged").fetchall():
+        q = float(r[2] or 0)          # الإنتاج: الدقيق بيطلع (موجب) والعيش بيدخل (سالب) — العيش بعد الدقيق في نفس الإنتاج
+        ev.append((r[3] or "", r[4] or "", 3, (-2 if q >= 0 else -1) if r[5] else 0, r[0], "D", r[1], q, 0.0, r[5] or 0, "هالك"))
     ev.sort(key=lambda e: e[:5])
     line, dmg, snap = {}, {}, None
+    pcost = {}                         # تكلفة الدقيق لكل إنتاج (علشان العيش يدخل المخزن بيها)
 
     def take(iid, q):
         """بيسحب كمية من أقدم طبقة ويرجّع إجمالي تكلفتها."""
@@ -1505,10 +1508,15 @@ def fifo_engine(c):
     for e in ev:
         d, _, _, _, rid, typ, iid, q, price, damaged, kind = e
         if snap is None and d > today: snap = {k: [list(x) for x in v] for k, v in layers.items()}
+        if typ == "D" and damaged and q < 0:                              # عيش طالع من إنتاج = وارد للمخزن بتكلفة الدقيق
+            u = pcost.get(damaged, 0.0) / -q; dmg[rid] = u
+            layers.setdefault(iid, deque()).append([-q, u]); last_in[iid] = u
+            continue
         if q <= 0: continue
         L = layers.setdefault(iid, deque())
         if typ == "D":
-            u = take(iid, q) / q; dmg[rid] = u; last_out[iid] = u
+            cst = take(iid, q); u = cst / q; dmg[rid] = u; last_out[iid] = u
+            if damaged: pcost[damaged] = pcost.get(damaged, 0.0) + cst
         elif kind == "مشتريات":
             L.append([q, price]); last_in[iid] = price; line[rid] = price
         elif kind == "مرتجع مشتريات":                                    # المرتجع للمورد بيطلع من آخر بضاعة دخلت
@@ -1708,7 +1716,7 @@ def profit_summary(start, end):
         dmg_direct = prod_cost = 0.0
         for r in c.execute("SELECT id, qty, unit_cost, production_id FROM damaged WHERE d_date BETWEEN ? AND ?", (start, end)).fetchall():
             v = float(r[1] or 0) * f["dmg"].get(r[0], float(r[2] or 0))
-            if r[3]: prod_cost += v          # دقيق اتصرف في الإنتاج = تكلفة إنتاج (مش هالك)
+            if r[3]: prod_cost += v          # دقيق اتصرف في الإنتاج − العيش اللي دخل المخزن بنفس التكلفة (الإنتاج القديم من غير عيش = تكلفة)
             else: dmg_direct += v
         commission = float(c.execute(f"SELECT COALESCE(SUM({COMM_QTY_SQL}*COALESCE(i.rep_rate,0)),0) FROM invoices i WHERE i.kind='مبيعات' AND i.rep_id IS NOT NULL AND COALESCE(NULLIF(i.due_date,''), i.inv_date) BETWEEN ? AND ?", (start, end)).fetchone()[0])
     rows = []; rev = ret = cost = rcost = dmg_ret_val = 0.0
@@ -1737,7 +1745,7 @@ def metric_rows(ps):
             ("الخصومات (صافي)", ps["ds"] - ps["dr"]), ("إجمالي الربح (Total)", ps["gross"]),
             ("المصروفات العامة", ps["general"]), ("المرتبات", ps["salary"]), ("السلف", ps["adv"]),
             ("إجمالي المصروفات", ps["exp_total"]), ("الهالك والتالف (بالتكلفة)", ps["damaged"]), ("عمولات المناديب", ps["commission"])] + \
-           ([("تكلفة دقيق الإنتاج", ps["production"])] if ps.get("production") else []) + [("صافي الربح", ps["actual"])]
+           ([("تكلفة دقيق الإنتاج", ps["production"])] if abs(ps.get("production") or 0) >= 0.01 else []) + [("صافي الربح", ps["actual"])]
 
 # ---------------- التقرير اليومي ----------------
 def daily_rows(day):

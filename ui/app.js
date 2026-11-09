@@ -315,6 +315,7 @@ const SCREENS = {
   "itm:damaged": { title: "الهالك والتالف", icon: "trash" },
   "prd:new": { title: "إنتاج اليوم", icon: "bread" },
   "prd:log": { title: "سجل الإنتاج", icon: "list" },
+  "prd:sell": { title: "بيع سريع", icon: "bread" },
   "smp:items": { title: "أصناف العينات", icon: "box" },
   "smp:out": { title: "عينات مبيعات", icon: "sale" },
   "smp:in": { title: "عينات مشتريات", icon: "buy" },
@@ -422,7 +423,7 @@ function navGroups() {
     ["السندات", "cash", ["vch:new", "vch:log"], [["طباعة إيصال أمانة", "print", trustPrint]]],
     ["الطلبات", "check", ["req"]],
     ["العملاء والموردون", "users", ["par:list"]],
-    hasFeature("production") ? ["الإنتاج", "bread", ["prd:new", "prd:log"]] : null,
+    hasFeature("production") ? ["الإنتاج", "bread", ["prd:sell", "prd:new", "prd:log"]] : null,
     ["الأصناف والمخزون", "box", ["itm:list", "itm:stock", "itm:sales", "itm:buys", "itm:damaged", ["العينات", "box", ["smp:items", "smp:out", "smp:in"]]]],
     ["الموظفون", "users", ["emp:list", "emp:att", "emp:attlog", "emp:veh"]],
     ["الحسابات", "calc", ["acc:statement", "acc:balances", "acc:cash", "acc:subcash", "acc:assets"]],
@@ -524,6 +525,7 @@ async function go(key, force) {
     else if (key === "itm:damaged") await renderDamaged(box);
     else if (key === "prd:new") await renderProdNew(box);
     else if (key === "prd:log") await renderProdLog(box);
+    else if (key === "prd:sell") await renderSell(box);
     else if (key === "smp:items") await renderSampleItems(box);
     else if (key === "smp:out") await renderSamples(box, "عينات مبيعات");
     else if (key === "smp:in") await renderSamples(box, "عينات مشتريات");
@@ -560,11 +562,13 @@ async function renderHome(box) {
     h("td", null, r.party), h("td", { class: "hint" }, r.rep), h("td", { class: "hint" }, r.pay), h("td", { class: "num" }, h("b", null, fmt(r.net))),
     h("td", { title: r.printed ? "اتطبعت" : "لسه ماتطبعتش" }, r.printed ? icon("check", 18) : "")));
   const day = new Date(S.boot.today + "T12:00:00").toLocaleDateString("ar-EG", { weekday: "long" });
+  const sell = hasFeature("production") && can("prd:sell") ? await sellCard() : null;
   box.replaceChildren(h("div", { class: "home" },
     h("section", { class: "hero anim-up d1" },
       h("div", { class: "hero-in" }, h("img", { src: S.boot.logo, alt: "" }),
         h("div", { class: "hero-t" }, h("b", null, S.boot.company), S.boot.tagline ? h("span", null, S.boot.tagline) : null)),
       h("div", { class: "hero-date" }, `${day}  ${S.boot.today.split("-").reverse().join("-")}`)),
+    sell,
     h("section", { class: "card home-inv anim-up d2" },
       h("div", { class: "card-h" }, h("h2", null, "فواتير اليوم"), h("span", { class: "hint" }, "ضغطتين على فاتورة = تفتحها")),
       d.rows.length ? h("div", { class: "tbl-wrap" }, h("table", { class: "t" },
@@ -1914,114 +1918,170 @@ async function renderDamaged(box) {
 
 /* ===================== الإنتاج (للأفران) ===================== */
 // شكاير دقيق ← طاولات ← أرغفة. الحساب بيظهر وانت بتكتب، والدقيق بيتخصم من المخزن (لو اخترت صنف الدقيق)
-const PRD = { bread: "بلدي", edit: null };
-const prodCalc = (bags, bagKg, trays, per, loafG) => {
+const PRD = { bread: "سياحي", edit: null };
+// وزن الرغيف بيتحسب: وزن الدقيق (الشكاير × وزن الشيكارة) ÷ (الطاولات × الأرغفة في الطاولة)
+const prodCalc = (bags, bagKg, trays, per) => {
   const loaves = trays * per, flourKg = bags * (bagKg || 50);
-  return { loaves, flourKg, breadKg: (loaves * loafG) / 1000, flourPerLoaf: loaves ? (flourKg * 1000) / loaves : 0, perBag: bags ? loaves / bags : 0, traysPerBag: bags ? trays / bags : 0 };
+  return { loaves, flourKg, loafG: loaves ? (flourKg * 1000) / loaves : 0, perBag: bags ? loaves / bags : 0, traysPerBag: bags ? trays / bags : 0 };
 };
-const breadChip = (b) => h("span", { class: "chip " + (b === "سياحي" ? "info" : "warn"), style: { padding: "2px 10px" } }, b);
 async function renderProdNew(box) {
   let setup; try { setup = await api("production_setup"); } catch (e) { return box.replaceChildren(h("div", { class: "page" }, h("div", { class: "chip warn" }, e.message))); }
   const num = (v, label) => h("input", { class: "in num", value: v ?? "", inputmode: "decimal", "aria-label": label });
   const dDate = dateIn(setup.today, "التاريخ"), bags = num("", "عدد الشكاير"), bagKg = num("50", "وزن الشيكارة"), trays = num("", "عدد الطاولات"),
-    per = num("", "أرغفة في الطاولة"), loafG = num("", "وزن الرغيف"), notes = h("input", { class: "in", "aria-label": "ملاحظات" });
+    per = num("", "أرغفة في الطاولة"), notes = h("input", { class: "in", "aria-label": "ملاحظات" });
   const deduct = h("input", { type: "checkbox", checked: true });
   const itemsL = () => setup.items.map((i) => ({ ...i, label: `${i.name}${i.code ? " [" + i.code + "]" : ""}` }));
   const flour = combo({ id: "p-flour", label: "صنف الدقيق", placeholder: "اكتب اسم صنف الدقيق ...", items: itemsL, sub: (i) => `رصيد ${fq(i.stock)} ${i.unit}`, onPick: (it, adv) => { if (adv) { bags.focus(); bags.select(); } } });
-  const segB = h("div", { class: "seg" }, setup.breads.map((b) => h("button", { type: "button", "data-v": b, onclick: () => setBread(b) }, "عيش " + b)));
-  const out = { loaves: h("div", { class: "v" }, "0"), weight: h("div", { class: "v" }, "—"), fpl: h("div", { class: "v" }, "—"), perBag: h("div", { class: "v" }, "—") };
+  const sizes = h("div", { class: "seg tray-seg" }, (setup.tray_sizes || [21, 24, 25]).map((n) => h("button", { type: "button", "data-v": n, onclick: () => { per.value = n; calc(); trays.focus(); } }, String(n))));
+  const out = { loaves: h("div", { class: "v" }, "0"), loafG: h("div", { class: "v" }, "—"), flourKg: h("div", { class: "v" }, "—"), perBag: h("div", { class: "v" }, "—") };
   const tile = (t, el, cls = "") => h("div", { class: "tile " + cls }, h("div", { class: "h" }, t), el);
   const saveBtn = h("button", { class: "btn primary", onclick: () => save() }, icon("save", 18), "حفظ الإنتاج");
   const cancelBtn = h("button", { class: "btn ghost", style: { display: "none" }, onclick: () => resetForm() }, "إلغاء التعديل");
   const title = h("h2", null, "تسجيل إنتاج");
   function pickFlour(id) { const it = itemsL().find((i) => i.id === id); flour.set(it || null); }
-  function setBread(b, keepVals) {
-    PRD.bread = b; segB.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === b));
-    if (!keepVals) {     // القيم المعتادة للنوع ده (من آخر إنتاج)
-      const L = setup.last[b] || {};
-      if (L.per_tray) per.value = fq(L.per_tray); if (L.loaf_g) loafG.value = fq(L.loaf_g); if (L.bag_kg) bagKg.value = fq(L.bag_kg);
-      pickFlour(L.flour_item_id || setup.flour_guess);
-    }
-    calc();
+  function defaults() {      // القيم المعتادة (من آخر إنتاج)
+    const L = setup.last[PRD.bread] || {};
+    per.value = L.per_tray ? fq(L.per_tray) : ""; if (L.bag_kg) bagKg.value = fq(L.bag_kg);
+    pickFlour(L.flour_item_id || setup.flour_guess); calc();
   }
   function calc() {
-    const k = prodCalc(+bags.value || 0, +bagKg.value || 0, +trays.value || 0, +per.value || 0, +loafG.value || 0);
+    const k = prodCalc(+bags.value || 0, +bagKg.value || 0, +trays.value || 0, +per.value || 0);
     out.loaves.textContent = fq(Math.round(k.loaves));
-    out.weight.textContent = k.breadKg ? fmt(k.breadKg) + " كجم" : "—";
-    out.fpl.textContent = k.flourPerLoaf ? fmt(k.flourPerLoaf) + " جم" : "—";
+    out.loafG.textContent = k.loafG ? fmt(k.loafG) + " جم" : "—";
+    out.flourKg.textContent = k.flourKg && +bags.value ? fmt(k.flourKg) + " كجم" : "—";
     out.perBag.textContent = k.perBag ? fmt(k.perBag) + " رغيف" : "—";
+    sizes.querySelectorAll("button").forEach((x) => x.classList.toggle("on", +x.dataset.v === +per.value));
   }
-  [bags, bagKg, trays, per, loafG].forEach((x) => x.addEventListener("input", calc));
+  [bags, bagKg, trays, per].forEach((x) => x.addEventListener("input", calc));
   function resetForm() {
     PRD.edit = null; title.textContent = "تسجيل إنتاج"; saveBtn.lastChild.textContent = "حفظ الإنتاج"; cancelBtn.style.display = "none";
-    bags.value = ""; trays.value = ""; notes.value = ""; deduct.checked = true; dDate.value = setup.today; setBread(PRD.bread); bags.focus();
+    bags.value = ""; trays.value = ""; notes.value = ""; deduct.checked = true; dDate.value = setup.today; defaults(); bags.focus();
   }
   function edit(r) {
-    PRD.edit = r.id; title.textContent = `تعديل إنتاج ${r.date} — عيش ${r.bread}`; saveBtn.lastChild.textContent = "حفظ التعديل"; cancelBtn.style.display = "";
-    setBread(r.bread, true); dDate.value = r.date; bags.value = fq(r.bags); bagKg.value = fq(r.bag_kg); trays.value = fq(r.trays); per.value = fq(r.per_tray);
-    loafG.value = r.loaf_g ? fq(r.loaf_g) : ""; notes.value = r.notes; pickFlour(r.flour_item_id); deduct.checked = !!r.deducted; calc();
+    PRD.edit = r.id; title.textContent = `تعديل إنتاج ${r.date}`; saveBtn.lastChild.textContent = "حفظ التعديل"; cancelBtn.style.display = "";
+    dDate.value = r.date; bags.value = fq(r.bags); bagKg.value = fq(r.bag_kg); trays.value = fq(r.trays); per.value = fq(r.per_tray);
+    notes.value = r.notes; pickFlour(r.flour_item_id); deduct.checked = !!r.deducted; calc();
     box.scrollIntoView({ behavior: "smooth", block: "start" }); bags.focus();
   }
   async function save() {
     const f = flour.get();
     if (deduct.checked && !f) { flour.focus(); return toast("اختار صنف الدقيق (أو شيل علامة «اخصم من المخزن»)", "err"); }
     const v = { id: PRD.edit, date: dDate.value, bread: PRD.bread, flour_item_id: f ? f.id : null, deduct: deduct.checked, bags: bags.value, bag_kg: bagKg.value,
-      trays: trays.value, per_tray: per.value, loaf_g: loafG.value, notes: notes.value };
+      trays: trays.value, per_tray: per.value, notes: notes.value };
     const r = await ownerRetry((pw) => api("save_production", v, pw)); if (!r) return;
-    const k = prodCalc(+bags.value, +bagKg.value, +trays.value, +per.value, +loafG.value);
-    toast(`✔ اتسجل إنتاج عيش ${PRD.bread}: ${fq(Math.round(k.loaves))} رغيف`, "ok");
-    setup.last[PRD.bread] = { per_tray: +per.value, loaf_g: +loafG.value, bag_kg: +bagKg.value, flour_item_id: f ? f.id : null };
+    const k = prodCalc(+bags.value, +bagKg.value, +trays.value, +per.value);
+    toast(`✔ اتسجل الإنتاج: ${fq(Math.round(k.loaves))} رغيف دخلوا المخزن`, "ok");
+    setup.last[PRD.bread] = { per_tray: +per.value, bag_kg: +bagKg.value, flour_item_id: f ? f.id : null };
     try { setup.items = (await api("production_setup")).items; } catch (e) { }
     resetForm(); load();
   }
   const T = selTable({ maxH: "40vh",
-    cols: [{ h: "الوقت", key: "time", cls: "hint" }, { h: "النوع", fn: (r) => breadChip(r.bread) }, { h: "شكاير", num: true, fn: (r) => fq(r.bags) }, { h: "طاولات", num: true, fn: (r) => fq(r.trays) },
-      { h: "رغيف/طاولة", num: true, fn: (r) => fq(r.per_tray) }, { h: "الأرغفة", num: true, fn: (r) => h("b", null, fq(r.loaves)) }, { h: "وزن الرغيف", num: true, fn: (r) => (r.loaf_g ? fq(r.loaf_g) + " جم" : "—") },
-      { h: "الوزن", num: true, fn: (r) => (r.bread_kg ? fmt(r.bread_kg) + " كجم" : "—") }, { h: "رغيف/شيكارة", num: true, fn: (r) => fmt(r.loaves_per_bag) }, { h: "ملاحظات", key: "notes", cls: "hint" }],
+    cols: [{ h: "الوقت", key: "time", cls: "hint" }, { h: "الدقيق", fn: (r) => r.flour || "—", cls: "hint" }, { h: "شكاير", num: true, fn: (r) => fq(r.bags) }, { h: "طاولات", num: true, fn: (r) => fq(r.trays) },
+      { h: "رغيف/طاولة", num: true, fn: (r) => fq(r.per_tray) }, { h: "الأرغفة", num: true, fn: (r) => h("b", null, fq(r.loaves)) }, { h: "وزن الرغيف", num: true, fn: (r) => (r.loaf_g ? fmt(r.loaf_g) + " جم" : "—") },
+      { h: "رغيف/شيكارة", num: true, fn: (r) => fmt(r.loaves_per_bag) }, { h: "ملاحظات", key: "notes", cls: "hint" }],
     onOpen: (r) => edit(r), onKey: (e) => { if (e.key === "Delete") del(); },
-    totals: (rs, isSel) => [h("b", null, isSel ? "إجمالي المحدد" : "إنتاج اليوم"), ...["بلدي", "سياحي"].map((b) => { const x = rs.filter((r) => r.bread === b); return x.length ? totItem("عيش " + b, `${fq(x.reduce((a, r) => a + r.loaves, 0))} رغيف من ${fq(x.reduce((a, r) => a + r.bags, 0))} شيكارة`) : null; }).filter(Boolean)] });
+    totals: (rs, isSel) => [h("b", null, isSel ? "إجمالي المحدد" : "إنتاج اليوم"), totItem("الأرغفة", fq(rs.reduce((a, r) => a + r.loaves, 0))), totItem("الشكاير", fq(rs.reduce((a, r) => a + r.bags, 0))),
+      totItem("الطاولات", fq(rs.reduce((a, r) => a + r.trays, 0)))] });
   async function load() { try { T.setRows((await api("production_list", dDate.value || setup.today, dDate.value || setup.today)).rows); } catch (e) { toast(e.message, "err"); } }
   async function del() {
     const r = T.selected()[0]; if (!r) return toast("حدد إنتاج من الجدول الأول");
-    if (!(await confirmBox(`تحذف إنتاج عيش ${r.bread} (${fq(r.loaves)} رغيف)؟${r.deducted ? " الدقيق هيرجع للمخزن." : ""}`, "حذف", "احذف"))) return;
-    try { await api("delete_production", r.id); toast("✔ اتحذف", "ok"); if (PRD.edit === r.id) resetForm(); load(); } catch (e) { alertBox(e.message); }
+    if (!(await confirmBox(`تحذف الإنتاج ده (${fq(r.loaves)} رغيف)؟ العيش هيتشال من المخزن${r.deducted ? " والدقيق هيرجع." : "."}`, "حذف", "احذف"))) return;
+    const x = await ownerRetry((pw) => api("delete_production", r.id, pw)); if (!x) return;
+    toast("✔ اتحذف", "ok"); if (PRD.edit === r.id) resetForm(); load();
   }
   dDate.addEventListener("change", load);
-  enterChain([bags, bagKg, trays, per, loafG, notes], save);
+  enterChain([bags, bagKg, trays, per, notes], save);
   box.replaceChildren(h("div", { class: "page" },
-    h("div", { class: "hint" }, "اختار نوع العيش، واكتب الشكاير اللي اتشغلت وعدد الطاولات والأرغفة في الطاولة — الأرغفة والوزن بيتحسبوا لوحدهم. الدقيق بيتخصم من المخزن بسعر الشراء (FIFO)."),
-    h("section", { class: "card anim-up d1" }, h("div", { class: "card-h" }, title, segB),
+    h("div", { class: "hint" }, "اكتب الشكاير اللي اتشغلت وعدد الطاولات واختار حجم الطاولة — الأرغفة ووزن الرغيف بيتحسبوا لوحدهم. الدقيق بيتخصم من المخزن والعيش بيدخل المخزن علشان تقارنه باللي اتباع."),
+    h("section", { class: "card anim-up d1" }, h("div", { class: "card-h" }, title),
       h("div", { class: "form" },
         h("div", { class: "fld span2" }, h("label", { for: "p-flour" }, "صنف الدقيق"), flour.el),
         h("label", { class: "fld" }, "عدد شكاير الدقيق", bags), h("label", { class: "fld" }, "وزن الشيكارة (كجم)", bagKg),
-        h("label", { class: "fld" }, "عدد الطاولات", trays), h("label", { class: "fld" }, "الأرغفة في الطاولة", per),
-        h("label", { class: "fld" }, "وزن الرغيف (جرام)", loafG), h("label", { class: "fld" }, "التاريخ", dDate),
+        h("div", { class: "fld span2" }, h("span", null, "حجم الطاولة (رغيف في الطاولة)"), h("div", { class: "tray-pick" }, sizes, per)),
+        h("label", { class: "fld" }, "عدد الطاولات", trays), h("label", { class: "fld" }, "التاريخ", dDate),
         h("label", { class: "fld span2" }, "ملاحظات", notes),
         h("label", { class: "chk", style: { color: "var(--navy)", alignSelf: "end" } }, deduct, "اخصم الدقيق من المخزن"),
         h("div", { class: "fld", style: { justifyContent: "flex-end", flexDirection: "row", gap: "8px", alignItems: "flex-end" } }, cancelBtn, saveBtn)),
-      h("div", { class: "tiles prd-tiles" }, tile("عدد الأرغفة", out.loaves, "net"), tile("وزن الإنتاج", out.weight), tile("دقيق في الرغيف", out.fpl), tile("رغيف لكل شيكارة", out.perBag))),
+      h("div", { class: "tiles prd-tiles" }, tile("عدد الأرغفة", out.loaves, "net"), tile("وزن الرغيف", out.loafG), tile("وزن الدقيق", out.flourKg), tile("رغيف لكل شيكارة", out.perBag))),
     h("section", { class: "card anim-up d2" }, h("div", { class: "card-h" }, h("h2", null, "إنتاج اليوم ده"),
-      h("div", { style: { display: "flex", gap: "8px" } }, h("button", { class: "btn", onclick: () => { const r = T.selected()[0]; r ? edit(r) : toast("حدد إنتاج الأول"); } }, icon("edit", 18), "تعديل"),
+      h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } }, h("button", { class: "btn", onclick: () => { const r = T.selected()[0]; r ? edit(r) : toast("حدد إنتاج الأول"); } }, icon("edit", 18), "تعديل"),
         h("button", { class: "btn danger", onclick: del }, icon("trash", 18), "حذف"), h("button", { class: "btn ghost", onclick: () => go("prd:log") }, icon("list", 18), "سجل الإنتاج"))), T.el)));
-  setBread(PRD.bread); await load(); bags.focus();
+  defaults(); await load(); bags.focus();
+}
+
+/* ===================== بيع الشباك: كام رغيف + بكام + تم ===================== */
+async function sellCard(opts = {}) {
+  const wrap = h("section", { class: "card sell-card anim-up d2" });
+  let d;
+  const qty = h("input", { class: "in num big", inputmode: "numeric", placeholder: "0", "aria-label": "كام رغيف" });
+  const amt = h("input", { class: "in num big", inputmode: "decimal", placeholder: "0", "aria-label": "بكام جنيه" });
+  const who = h("select", { class: "in", "aria-label": "العميل" });
+  const cash = h("input", { type: "checkbox", checked: true });
+  const cashL = h("label", { class: "chk" }, cash, "اتدفع كاش");
+  const done = h("button", { class: "btn primary sell-done", onclick: () => submit() }, icon("check", 22), "تم");
+  const stats = h("div", { class: "sell-stats" });
+  const recent = h("div", { class: "sell-recent" });
+  const syncWho = () => { const shb = +who.value === d.shbak_id; cashL.style.display = shb ? "none" : ""; if (shb) cash.checked = true; };
+  who.addEventListener("change", syncWho);
+  qty.addEventListener("input", () => { if (d && d.price && !amt.dataset.touched) amt.value = qty.value ? fq(Math.round(+qty.value * d.price * 100) / 100) : ""; });
+  amt.addEventListener("input", () => { amt.dataset.touched = amt.value ? "1" : ""; });
+  let busy = false;
+  async function submit() {
+    if (busy) return;
+    if (!(+qty.value > 0)) { qty.focus(); return toast("اكتب كام رغيف", "err"); }
+    if (amt.value === "" || +amt.value < 0) { amt.focus(); return toast("اكتب المبلغ", "err"); }
+    busy = true; done.disabled = true;
+    try {
+      const r = await api("quick_sale", qty.value, amt.value, +who.value || null, cash.checked);
+      toast(`✔ اتسجل: ${fq(+qty.value)} رغيف بـ ${fmt(+amt.value)} ج (فاتورة ${r.number})`, "ok");
+      qty.value = ""; amt.value = ""; amt.dataset.touched = ""; who.value = d.shbak_id; syncWho(); await load(); qty.focus();
+    } catch (e) { alertBox(e.message); }
+    finally { busy = false; done.disabled = false; }
+  }
+  async function load() {
+    try { d = await api("sell_setup"); } catch (e) { wrap.replaceChildren(h("div", { class: "chip warn" }, e.message)); return; }
+    const keep = who.value;
+    who.replaceChildren(h("option", { value: d.shbak_id }, "🪟 الشباك (زبون نقدي)"), ...d.customers.map((c) => h("option", { value: c.id }, "🍽 " + c.name)));
+    who.value = keep && [...who.options].some((o) => o.value === keep) ? keep : d.shbak_id; syncWho();
+    const t = d.today, st = (lbl, v, cls = "") => h("div", { class: "st " + cls }, h("span", null, lbl), h("b", null, v));
+    stats.replaceChildren(st("اتعمل النهارده", fq(t.produced)), st("اتباع النهارده", fq(t.sold)), st("الباقي في المخزن", fq(t.stock), t.stock < 0 ? "bad" : "ok"),
+      st("فلوس البيع", fmt(t.amount) + " ج"), st("اتقبض كاش", fmt(t.cash) + " ج", "net"));
+    recent.replaceChildren(...(d.recent.length ? [h("div", { class: "hint" }, "آخر بيع النهارده"), h("div", { class: "tbl-wrap" }, h("table", { class: "t" },
+      h("thead", null, h("tr", null, ["الوقت", "العميل", "الأرغفة", "المبلغ", "اتدفع", "سجّلها"].map((x) => h("th", null, x)))),
+      h("tbody", null, d.recent.slice(0, opts.full ? 30 : 6).map((r) => h("tr", { class: "click", ondblclick: () => showInvoice(r.id) }, h("td", { class: "hint" }, r.time), h("td", null, r.party),
+        h("td", { class: "num" }, h("b", null, fq(r.qty))), h("td", { class: "num" }, fmt(r.net)), h("td", { class: "num" }, fmt(r.paid)), h("td", { class: "hint" }, r.user))))))] : []));
+  }
+  enterChain([qty, amt], submit);
+  wrap.append(h("div", { class: "card-h" }, h("h2", null, "🥖 بيع سريع"), h("span", { class: "hint" }, "كام رغيف + بكام ← تم = فاتورة على طول")),
+    h("div", { class: "sell-row" },
+      h("label", { class: "fld" }, "كام رغيف", qty), h("label", { class: "fld" }, "بكام جنيه", amt), done),
+    h("div", { class: "sell-sub" }, h("label", { class: "fld" }, "لمين؟", who), cashL),
+    stats, recent);
+  await load();
+  wrap.focusFirst = () => qty.focus();
+  return wrap;
+}
+async function renderSell(box) {
+  const c = await sellCard({ full: true });
+  box.replaceChildren(h("div", { class: "page" }, c)); c.focusFirst && c.focusFirst();
 }
 async function renderProdLog(box) {
   const P = S.prdSt || (S.prdSt = { from: monthStart(), to: S.boot.today, bread: "الكل", view: "days" });
   const from = dateIn(P.from, "من"), to = dateIn(P.to, "إلى");
-  const bread = h("select", { class: "in", "aria-label": "النوع" }, ["الكل", "بلدي", "سياحي"].map((x) => h("option", { value: x }, x === "الكل" ? "الكل" : "عيش " + x))); bread.value = P.bread;
+  P.bread = "الكل";
   const tilesBox = h("div", { class: "tiles anim-up d2" });
   const view = h("div", { class: "seg" }, [["days", "كل يوم"], ["rows", "التفاصيل"]].map(([k, l]) => h("button", { class: P.view === k ? "on" : "", "data-v": k, onclick: () => { P.view = k; view.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === k)); show(); } }, l)));
   const D = selTable({
-    cols: [{ h: "التاريخ", key: "date" }, { h: "النوع", fn: (r) => breadChip(r.bread) }, { h: "شكاير", num: true, fn: (r) => fq(r.bags) }, { h: "طاولات", num: true, fn: (r) => fq(r.trays) },
-      { h: "الأرغفة", num: true, fn: (r) => h("b", null, fq(r.loaves)) }, { h: "رغيف/شيكارة", num: true, fn: (r) => fmt(r.loaves_per_bag) }, { h: "الوزن (كجم)", num: true, fn: (r) => fmt(r.bread_kg) },
+    cols: [{ h: "التاريخ", key: "date" }, { h: "شكاير", num: true, fn: (r) => fq(r.bags) }, { h: "طاولات", num: true, fn: (r) => fq(r.trays) },
+      { h: "الأرغفة", num: true, fn: (r) => h("b", null, fq(r.loaves)) }, { h: "رغيف/شيكارة", num: true, fn: (r) => fmt(r.loaves_per_bag) }, { h: "الدقيق (كجم)", num: true, fn: (r) => fmt(r.bread_kg) },
       ...(S.me.owner ? [{ h: "تكلفة الدقيق", num: true, fn: (r) => fmt(r.cost) }] : [])],
     totals: (rs, isSel) => [h("b", null, isSel ? "إجمالي المحدد" : "الإجمالي"), totItem("الشكاير", fq(rs.reduce((a, r) => a + r.bags, 0))), totItem("الأرغفة", fq(rs.reduce((a, r) => a + r.loaves, 0))),
-      totItem("الوزن", fmt(rs.reduce((a, r) => a + r.bread_kg, 0)) + " كجم")] });
+      totItem("الدقيق", fmt(rs.reduce((a, r) => a + r.bread_kg, 0)) + " كجم")] });
   const R = selTable({
-    cols: [{ h: "التاريخ", key: "date" }, { h: "الوقت", key: "time", cls: "hint" }, { h: "النوع", fn: (r) => breadChip(r.bread) }, { h: "الدقيق", fn: (r) => r.flour || "—", cls: "hint" },
+    cols: [{ h: "التاريخ", key: "date" }, { h: "الوقت", key: "time", cls: "hint" }, { h: "الدقيق", fn: (r) => r.flour || "—", cls: "hint" },
       { h: "شكاير", num: true, fn: (r) => fq(r.bags) }, { h: "طاولات", num: true, fn: (r) => fq(r.trays) }, { h: "رغيف/طاولة", num: true, fn: (r) => fq(r.per_tray) },
-      { h: "الأرغفة", num: true, fn: (r) => h("b", null, fq(r.loaves)) }, { h: "وزن الرغيف", num: true, fn: (r) => (r.loaf_g ? fq(r.loaf_g) + " جم" : "—") },
-      { h: "الوزن (كجم)", num: true, fn: (r) => fmt(r.bread_kg) }, { h: "دقيق/رغيف", num: true, fn: (r) => (r.flour_per_loaf ? fmt(r.flour_per_loaf) + " جم" : "—") },
+      { h: "الأرغفة", num: true, fn: (r) => h("b", null, fq(r.loaves)) }, { h: "وزن الرغيف", num: true, fn: (r) => (r.loaf_g ? fmt(r.loaf_g) + " جم" : "—") },
+      { h: "الدقيق (كجم)", num: true, fn: (r) => fmt(r.bread_kg) },
       ...(S.me.owner ? [{ h: "تكلفة الرغيف", num: true, fn: (r) => (r.loaf_cost ? fmt(r.loaf_cost) : "—") }] : []), { h: "ملاحظات", key: "notes", cls: "hint" }],
     onKey: (e) => { if (e.key === "Delete") del(); },
     totals: (rs, isSel) => [h("b", null, isSel ? "إجمالي المحدد" : "الإجمالي"), totItem("الشكاير", fq(rs.reduce((a, r) => a + r.bags, 0))), totItem("الأرغفة", fq(rs.reduce((a, r) => a + r.loaves, 0)))] });
@@ -2032,21 +2092,21 @@ async function renderProdLog(box) {
     D.setRows(data.summary); R.setRows(data.rows);
   }
   async function load() {
-    P.from = from.value; P.to = to.value || from.value; P.bread = bread.value;
+    P.from = from.value; P.to = to.value || from.value;
     try { data = await api("production_list", P.from, P.to, P.bread); } catch (e) { return toast(e.message, "err"); }
     const t = data.totals, tile = (title, v, cls = "") => h("div", { class: "tile " + cls }, h("div", { class: "h" }, title), h("div", { class: "v" }, v));
-    tilesBox.replaceChildren(...(Object.keys(t).length ? Object.entries(t).flatMap(([b, x]) => [tile(`عيش ${b} — الأرغفة`, fq(x.loaves), "net"), tile(`عيش ${b} — الشكاير`, fq(x.bags)), tile(`عيش ${b} — رغيف/شيكارة`, fmt(x.loaves_per_bag))])
+    tilesBox.replaceChildren(...(Object.keys(t).length ? Object.entries(t).flatMap(([b, x]) => [tile("الأرغفة", fq(x.loaves), "net"), tile("شكاير الدقيق", fq(x.bags)), tile("الطاولات", fq(x.trays)), tile("رغيف/شيكارة", fmt(x.loaves_per_bag))])
       : [h("div", { class: "hint" }, "مفيش إنتاج في الفترة دي")]));
     show();
   }
   async function del() {
     const r = R.selected()[0]; if (!r) return toast("حدد تسجيل من «التفاصيل» الأول");
-    if (!(await confirmBox(`تحذف إنتاج عيش ${r.bread} يوم ${r.date} (${fq(r.loaves)} رغيف)؟`, "حذف", "احذف"))) return;
-    try { await api("delete_production", r.id); toast("✔ اتحذف", "ok"); load(); } catch (e) { alertBox(e.message); }
+    if (!(await confirmBox(`تحذف إنتاج يوم ${r.date} (${fq(r.loaves)} رغيف)؟`, "حذف", "احذف"))) return;
+    const x = await ownerRetry((pw) => api("delete_production", r.id, pw)); if (!x) return; toast("✔ اتحذف", "ok"); load();
   }
-  [from, to, bread].forEach((x) => x.addEventListener("change", load));
+  [from, to].forEach((x) => x.addEventListener("change", load));
   box.replaceChildren(h("div", { class: "page" },
-    h("section", { class: "card anim-up d1" }, h("div", { class: "form" }, h("label", { class: "fld" }, "من", from), h("label", { class: "fld" }, "إلى", to), h("label", { class: "fld" }, "النوع", bread),
+    h("section", { class: "card anim-up d1" }, h("div", { class: "form" }, h("label", { class: "fld" }, "من", from), h("label", { class: "fld" }, "إلى", to),
       h("div", { class: "fld", style: { justifyContent: "flex-end", flexDirection: "row", gap: "8px", alignItems: "flex-end" } },
         h("button", { class: "btn gold", onclick: async () => { try { await api("print_production", P.from, P.to, P.bread); toast("🖨 شاشة الطباعة هتفتح ...", "ok"); } catch (e) { toast(e.message, "err"); } } }, icon("print", 18), "طباعة التقرير"),
         can("prd:new") ? h("button", { class: "btn primary", onclick: () => go("prd:new") }, icon("plus", 18), "إنتاج جديد") : null))),
@@ -2711,7 +2771,7 @@ async function accessModal(u, setup) {
   emp.value = u && u.emp_id ? String(u.emp_id) : "";
   const fEmp = h("label", { class: "fld" }, "المندوب (من الموظفين)", emp);
   const groups = [["الرئيسية", ["home"]], ["الفواتير", ["inv:مبيعات", "inv:مشتريات", "inv:مرتجع مبيعات", "inv:مرتجع مشتريات", "log"]], ["السندات", ["vch:new", "vch:log"]],
-    ["العملاء والموردون", ["par:list"]], ...(hasFeature("production") ? [["الإنتاج", ["prd:new", "prd:log"]]] : []), ["الأصناف والمخزون", ["itm:list", "itm:stock", "itm:sales", "itm:buys", "itm:damaged", "smp:items", "smp:out", "smp:in"]],
+    ["العملاء والموردون", ["par:list"]], ...(hasFeature("production") ? [["الإنتاج", ["prd:sell", "prd:new", "prd:log"]]] : []), ["الأصناف والمخزون", ["itm:list", "itm:stock", "itm:sales", "itm:buys", "itm:damaged", "smp:items", "smp:out", "smp:in"]],
     ["الموظفون", ["emp:list", "emp:att", "emp:attlog", "emp:veh"]], ["الحسابات", ["acc:statement", "acc:balances", "acc:cash", "acc:subcash"]],
     ["التقارير", ["rep:daily", "rep:reps", "rep:targets", "rep:log"]], ["الإعدادات", ["set:main"]]];
   const chk = {};

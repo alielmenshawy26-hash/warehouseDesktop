@@ -486,3 +486,21 @@ html.standalone .shell{background:var(--ground);min-height:100dvh}
 .prd-tiles .v{direction:rtl;text-align:right;transition:color .3s, transform .3s var(--ease)}
 .card-h .seg button{white-space:nowrap;padding:0 16px}
 @media (max-width:760px){.prd-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* حجم الطاولة + البيع السريع (الأفران) */
+.tray-pick{display:flex;gap:8px;align-items:center}.tray-pick .in{max-width:110px}
+.tray-seg button{min-width:52px;font-weight:700}
+.sell-card{border-top:3px solid var(--gold)}
+.sell-row{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}
+.sell-row .in.big{height:58px;font-size:26px;font-weight:800;text-align:center}
+.sell-done{height:58px;min-width:130px;font-size:20px;justify-content:center}
+.sell-sub{display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-top:10px}.sell-sub .fld{flex:1 1 240px}
+.sell-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:14px}
+.sell-stats .st{background:var(--ground);border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.sell-stats .st span{font-size:12px;color:var(--muted)}.sell-stats .st b{font-size:18px;color:var(--navy)}
+.sell-stats .st.ok b{color:#2f7d4f}.sell-stats .st.bad{border-color:#e7b4ac;background:#fbefec}.sell-stats .st.bad b{color:#b3412f}
+.sell-stats .st.net{background:var(--navy);border-color:var(--navy)}.sell-stats .st.net span{color:var(--gold-2)}.sell-stats .st.net b{color:#fff}
+.sell-recent{margin-top:12px}.sell-recent .hint{margin-bottom:4px}
+@media (max-width:760px){.sell-row{grid-template-columns:1fr 1fr}.sell-done{grid-column:1/-1;width:100%}.sell-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.sell-stats .st.net{grid-column:1/-1}}
+.home:has(.sell-card){height:auto}.home:has(.sell-card)>*{flex-shrink:0}.home:has(.sell-card) .home-inv{flex:none;max-height:70vh}
+.home:has(.sell-card) .hero{flex:none;height:clamp(190px,26vh,260px)}.home:has(.sell-card) .hero-in img{width:clamp(110px,11vw,170px)}.home:has(.sell-card) .hero-t b{font-size:clamp(40px,4.6vw,72px)}
+.home:has(.sell-card) .hero{background:linear-gradient(160deg,#fff 0%,var(--ground) 60%,var(--line) 100%)}.home:has(.sell-card) .hero-t span{color:var(--blue)}.home:has(.sell-card) .hero-in img{border-color:var(--line-2)}.home:has(.sell-card) .hero:before,.home:has(.sell-card) .hero:after{border-color:rgba(160,106,53,.12)}
