@@ -8,6 +8,8 @@
   logo.png     →  الشعار (PNG أو JPG) — اختياري، من غيره بياخد الشعار العام
 """
 import base64, json, os, sys
+try: sys.stdout.reconfigure(encoding="utf-8")
+except Exception: pass
 
 def main(slug):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
