@@ -8,6 +8,7 @@
 `https://github.com/alielmenshawy26-hash/warehouseDesktop/releases/latest/download/Warehouse-Setup-<العميل>.exe`
 
 - فرحات: `Warehouse-Setup-farahat.exe` (واللينك القديم `Warehouse-Setup.exe` = نفس نسخة فرحات)
+- فرن خير زمان: `Warehouse-Setup-khair-zaman.exe` (فيه شاشة الإنتاج)
 - نسخة العرض: `Warehouse-Setup-demo.exe` (اسمها «نسخة تجريبية»)
 
 **عميل جديد:** فولدر جديد في `clients/<slug>/` فيه `client.json` (`{"company": "...", "tagline": "..."}`) و`logo.png`، وبعد الـ push بيتعمل له Setup لوحده.

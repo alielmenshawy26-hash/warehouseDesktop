@@ -480,3 +480,9 @@ html.standalone .shell{background:var(--ground);min-height:100dvh}
 
 /* الخانات المقفولة (زي اسم الشركة المقفول في النسخة) */
 .in:disabled { background: #eef2f6; color: #64748b; cursor: not-allowed; }
+
+/* الإنتاج: مربعات الحساب اللي بتتحدث وانت بتكتب */
+.prd-tiles{margin-top:12px;grid-template-columns:repeat(4,minmax(0,1fr))}
+.prd-tiles .v{direction:rtl;text-align:right;transition:color .3s, transform .3s var(--ease)}
+.card-h .seg button{white-space:nowrap;padding:0 16px}
+@media (max-width:760px){.prd-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}

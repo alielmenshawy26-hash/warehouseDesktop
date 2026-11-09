@@ -10,7 +10,7 @@
 | `zalat_ui.py` | البرنامج نفسه: `Api` (كل دوال الشاشات)، الصلاحيات (`ALL_SCREENS`/`OWNER_ONLY_SCREENS`/`DEFAULT_SCREENS`/`METHOD_SCREENS`)، `_guard`/`_scope`، سيرفر الموقع، و`main()` (pywebview). |
 | `ui/` | الواجهة: `index.html`، `app.js` (كل الشاشات)، `app.css`، `fonts/` (خط Cairo جوه البرنامج — مفيش جوجل)، `icons/`، `sw.js`، `manifest.webmanifest`. |
 | `installer.iss` | Inno Setup: `Warehouse-Setup-<slug>.exe`، الـ AppId نفس warehouseDesktop القديم (بيحدّث فوقه). |
-| `clients/<slug>/` | عميل: `client.json` (`company`، `tagline`) + `logo.png`. كل فولدر = Setup لوحده. |
+| `clients/<slug>/` | عميل: `client.json` (`company`، `tagline`، و اختياري `features` و`theme`) + `logo.png`. كل فولدر = Setup لوحده. |
 | `tools/make_brand.py` | بيعمل `client_brand.py` (اسم + تحت الاسم + شعار base64) لعميل قبل الـ build. الملف ده متجاهل في git. |
 | `.github/workflows/build.yml` | مع كل push على main: Setup لكل عميل في `clients/` + Release `V1.0.N` فيه كلهم. |
 
@@ -23,6 +23,19 @@
 - `settings_save` مبيغيّرش الاسم، و`set_logo` بيرفض (`W.BRAND_LOCKED`)، والإعدادات بتعرضهم مقفولين.
 - عميل جديد = فولدر في `clients/` + push. تغيير اسم/شعار عميل = تعديل الفولدر بتاعه + push (نسخة جديدة).
 - تجربة محلية لعميل: `python tools/make_brand.py farahat` وبعدين `python zalat_ui.py --serve` (امسح `client_brand.py` بعدها).
+
+## مميزات خاصة بعميل (features) وألوانه (theme)
+- `client.json` → `"features": ["production"]` بيفتح شاشات زيادة للعميل ده بس (`W.has_feature`، و`hasFeature` في app.js). من غيرها الشاشات مش بتظهر والـ API بيرفض.
+- `"theme": {"--navy": ...}` بيغيّر متغيرات `app.css` للعميل (بيتطبق في `applyTheme` بعد `boot`).
+- العملاء دلوقتي: `farahat` (شركة فرحات)، `khair-zaman` (فرن خير زمان — ألوان بني ودهبي + الإنتاج)، `demo` (نسخة تجريبية).
+
+## الإنتاج (feature: production — للأفران)
+- جدول `production`: التاريخ، نوع العيش (بلدي/سياحي)، صنف الدقيق، الشكاير ووزن الشيكارة، الطاولات، الأرغفة في الطاولة، وزن الرغيف (جرام).
+- المحسوب: الأرغفة = الطاولات × الأرغفة في الطاولة، وزن الإنتاج = الأرغفة × وزن الرغيف، دقيق في الرغيف، رغيف/شيكارة.
+- الدقيق بيتخصم من المخزن كسطر في `damaged` فيه `production_id` (FIFO عادي). السطور دي مش بتظهر في شاشة الهالك، وفي الأرباح بتظهر «تكلفة دقيق الإنتاج» لوحدها.
+- الوحدة: لو صنف الدقيق بالكيلو بيتخصم شكاير × وزن الشيكارة، بالطن ÷ 1000، غير كده بالشيكارة.
+- شاشات: `prd:new` (إنتاج اليوم) و`prd:log` (سجل الإنتاج + طباعة). API: `production_setup/save_production/production_list/delete_production/print_production`.
+- تجربة الشاشة من غير build: `WAREHOUSE_FEATURES=production python zalat_ui.py --serve`.
 
 ## الفرق عن زلط
 - مجلد الداتا: `%LOCALAPPDATA%\WarehouseDesktop` (نفس البرنامج الأوفلاين القديم → داتا العملاء القدام بتكمّل وبتتحدّث لوحدها في `init_db`). زلط بيستخدم `WarehouseOnline`.

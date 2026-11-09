@@ -80,8 +80,16 @@ try:
     BRAND_COMPANY = (getattr(_BRAND, "BRAND_COMPANY", "") or "").strip() or "نسخة تجريبية"
     BRAND_TAGLINE = (getattr(_BRAND, "BRAND_TAGLINE", "") or "").strip()
     BRAND_LOGO_B64 = getattr(_BRAND, "BRAND_LOGO_B64", "") or DEFAULT_LOGO_B64
+    BRAND_THEME = dict(getattr(_BRAND, "BRAND_THEME", {}) or {})          # ألوان البرنامج للعميل ده
+    BRAND_FEATURES = list(getattr(_BRAND, "BRAND_FEATURES", []) or [])    # شاشات زيادة (مثلًا production = الإنتاج)
 except Exception:
     BRAND_SLUG, BRAND_COMPANY, BRAND_TAGLINE, BRAND_LOGO_B64 = "", "نسخة تجريبية", "", DEFAULT_LOGO_B64
+    BRAND_THEME, BRAND_FEATURES = {}, []
+if os.environ.get("WAREHOUSE_FEATURES"):      # للتجربة بس: تشغيل شاشات زيادة من غير build
+    BRAND_FEATURES = [x.strip() for x in os.environ["WAREHOUSE_FEATURES"].split(",") if x.strip()]
+
+def has_feature(name):
+    return name in BRAND_FEATURES
 BRAND_LOCKED = True     # الاسم والشعار مش بيتغيروا من الإعدادات (بيتغيروا بنسخة جديدة من المطور بس)
 
 def logo_bytes():
@@ -673,6 +681,11 @@ def init_db():
             for n in ("شيال", "أجور", "جاز", "إيجار عربية", "كهربا"):
                 c.execute("INSERT OR IGNORE INTO expense_cats(name) VALUES(?)", (n,))
         c.execute("INSERT OR IGNORE INTO expense_cats(name) VALUES('مصروفات أخرى')")
+        # الإنتاج (للأفران): شكاير دقيق ← طاولات ← أرغفة. الدقيق بيتخصم من المخزن كسطر في damaged مربوط بالإنتاج
+        c.execute("""CREATE TABLE IF NOT EXISTS production(id INTEGER PRIMARY KEY, p_date TEXT NOT NULL, created_at TEXT, bread TEXT NOT NULL,
+                     flour_item_id INTEGER, bags REAL DEFAULT 0, bag_kg REAL DEFAULT 50, trays REAL DEFAULT 0, per_tray REAL DEFAULT 0,
+                     loaf_g REAL DEFAULT 0, notes TEXT DEFAULT '', by_user TEXT DEFAULT '')""")
+        add_col(c, "damaged", "production_id", "INTEGER")      # سطر الدقيق اللي اتصرف في إنتاج (مش هالك)
         add_col(c, "settings", "logo_b64", "TEXT DEFAULT ''")    # (قديم) — الشعار دلوقتي مقفول جوه النسخة
         # اسم الشركة وتحت الاسم والشعار: دايمًا بتوع النسخة دي (محدش يقدر يغيّرهم ويبيع البرنامج باسمه)
         c.execute("UPDATE settings SET company=?, tagline=?, logo_b64='' WHERE id=1", (BRAND_COMPANY, BRAND_TAGLINE))
@@ -684,7 +697,7 @@ def init_db():
                           ("ix_inv_rep", "invoices(rep_id)"), ("ix_pay_party", "payments(party_id)"), ("ix_pay_inv", "payments(invoice_id)"),
                           ("ix_pay_date", "payments(pay_date)"), ("ix_pay_rep", "payments(rep_id)"), ("ix_exp_date", "expenses(exp_date)"),
                           ("ix_exp_emp", "expenses(employee_id)"), ("ix_dmg_item", "damaged(item_id)"), ("ix_party_rep", "parties(rep_id)"),
-                          ("ix_cash_date", "cash_moves(move_date)"), ("ix_repreq_status", "rep_requests(status)"), ("ix_vlog_vehicle", "vehicle_logs(vehicle_id, v_date)"), ("ix_loading_date", "loading_logs(l_date, employee_id)"), ("ix_follow_date", "followups(f_date, party_id)"), ("ix_log_at", "audit_log(at)"), ("ix_samples_item", "samples(sample_item_id)"), ("ix_att_date", "attendance(a_date)")):
+                          ("ix_cash_date", "cash_moves(move_date)"), ("ix_prod_date", "production(p_date)"), ("ix_repreq_status", "rep_requests(status)"), ("ix_vlog_vehicle", "vehicle_logs(vehicle_id, v_date)"), ("ix_loading_date", "loading_logs(l_date, employee_id)"), ("ix_follow_date", "followups(f_date, party_id)"), ("ix_log_at", "audit_log(at)"), ("ix_samples_item", "samples(sample_item_id)"), ("ix_att_date", "attendance(a_date)")):
             try: c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {sql}")
             except sqlite3.OperationalError: pass
 
@@ -1692,7 +1705,11 @@ def profit_summary(start, end):
             else:
                 k[1] += v
                 if r[4]: k[2] += v
-        dmg_direct = sum(float(r[1] or 0) * f["dmg"].get(r[0], float(r[2] or 0)) for r in c.execute("SELECT id, qty, unit_cost FROM damaged WHERE d_date BETWEEN ? AND ?", (start, end)).fetchall())
+        dmg_direct = prod_cost = 0.0
+        for r in c.execute("SELECT id, qty, unit_cost, production_id FROM damaged WHERE d_date BETWEEN ? AND ?", (start, end)).fetchall():
+            v = float(r[1] or 0) * f["dmg"].get(r[0], float(r[2] or 0))
+            if r[3]: prod_cost += v          # دقيق اتصرف في الإنتاج = تكلفة إنتاج (مش هالك)
+            else: dmg_direct += v
         commission = float(c.execute(f"SELECT COALESCE(SUM({COMM_QTY_SQL}*COALESCE(i.rep_rate,0)),0) FROM invoices i WHERE i.kind='مبيعات' AND i.rep_id IS NOT NULL AND COALESCE(NULLIF(i.due_date,''), i.inv_date) BETWEEN ? AND ?", (start, end)).fetchone()[0])
     rows = []; rev = ret = cost = rcost = dmg_ret_val = 0.0
     for it in items:
@@ -1713,14 +1730,14 @@ def profit_summary(start, end):
     damaged = dmg_ret_val + dmg_direct
     return {"rows": rows, "rev": rev, "ret": ret, "cost": cost, "rcost": rcost, "ds": ds, "dr": dr, "gross": gross,
             "general": general, "salary": salary, "adv": adv, "by_cat": by_cat, "exp_total": exp_total,
-            "damaged": damaged, "commission": commission, "actual": gross - exp_total - damaged - commission}
+            "damaged": damaged, "commission": commission, "production": prod_cost, "actual": gross - exp_total - damaged - commission - prod_cost}
 
 def metric_rows(ps):
     return [("المبيعات", ps["rev"]), ("المرتجعات", ps["ret"]), ("صافي التكلفة", ps["cost"] - ps["rcost"]),
             ("الخصومات (صافي)", ps["ds"] - ps["dr"]), ("إجمالي الربح (Total)", ps["gross"]),
             ("المصروفات العامة", ps["general"]), ("المرتبات", ps["salary"]), ("السلف", ps["adv"]),
-            ("إجمالي المصروفات", ps["exp_total"]), ("الهالك والتالف (بالتكلفة)", ps["damaged"]), ("عمولات المناديب", ps["commission"]),
-            ("صافي الربح", ps["actual"])]
+            ("إجمالي المصروفات", ps["exp_total"]), ("الهالك والتالف (بالتكلفة)", ps["damaged"]), ("عمولات المناديب", ps["commission"])] + \
+           ([("تكلفة دقيق الإنتاج", ps["production"])] if ps.get("production") else []) + [("صافي الربح", ps["actual"])]
 
 # ---------------- التقرير اليومي ----------------
 def daily_rows(day):

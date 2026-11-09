@@ -2,7 +2,9 @@
 
 الاستخدام:  python tools/make_brand.py farahat
 كل عميل ليه فولدر في clients/<slug>/ فيه:
-  client.json  →  {"company": "اسم الشركة", "tagline": "تحت الاسم"}
+  client.json  →  {"company": "اسم الشركة", "tagline": "تحت الاسم",
+                   "features": ["production"],            ← اختياري: شاشات زيادة للعميل ده (production = الإنتاج للأفران)
+                   "theme": {"--navy": "#3b2414", ...}}    ← اختياري: ألوان البرنامج للعميل ده (متغيرات app.css)
   logo.png     →  الشعار (PNG أو JPG) — اختياري، من غيره بياخد الشعار العام
 """
 import base64, json, os, sys
@@ -24,6 +26,8 @@ def main(slug):
     with open(out, "w", encoding="utf-8") as f:
         f.write("# ملف بيتعمل لوحده وقت الـ build (tools/make_brand.py) — متعدّلوش بإيدك\n")
         f.write(f"BRAND_SLUG = {slug!r}\nBRAND_COMPANY = {cfg['company'].strip()!r}\nBRAND_TAGLINE = {(cfg.get('tagline') or '').strip()!r}\nBRAND_LOGO_B64 = {logo!r}\n")
+        theme = {k: str(v) for k, v in (cfg.get("theme") or {}).items() if str(k).startswith("--")}
+        f.write(f"BRAND_THEME = {theme!r}\nBRAND_FEATURES = {list(cfg.get('features') or [])!r}\n")
     print(f"✔ client_brand.py جاهز: {cfg['company']} ({slug})" + (" + شعار" if logo else " (الشعار العام)"))
 
 if __name__ == "__main__":
